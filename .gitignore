@@ -1,0 +1,36 @@
+# Bundler
+/.bundle/
+/vendor/bundle/
+/Gemfile.lock
+
+# Built gem
+/*.gem
+/pkg/
+
+# RSpec / coverage
+/coverage/
+/spec/examples.txt
+/.rspec_status
+
+# Secrets & per-project state (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Script cache (resolved action bodies, keyed by digest)
+/tmp/rootcause/
+
+# Local dev / tooling
+*.log
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Claude Code local settings (keep CLAUDE.md symlink, ignore local overrides)
+.claude/settings.local.json
