@@ -1,0 +1,137 @@
+# frozen_string_literal: true
+
+require "json"
+require "timeout"
+require "stringio"
+require "digest"
+
+module RootCause
+  module ActionRunner
+    # Runs a digest-verified script body with params bound AS DATA.
+    #
+    # The body is compiled once per digest into a `lambda { |params| ... }`. Params
+    # reach the script only as the lambda argument — a frozen, symbol-keyed hash —
+    # never interpolated into the evaluated source. A value like
+    # `"; system('rm -rf /')"` is therefore an inert string, not code. The
+    # lambda's last expression is its return value; `return` inside the body works
+    # because lambdas have method-return semantics.
+    #
+    # Everything is caught: the hard Timeout backstop, any StandardError, and
+    # compile-time ScriptErrors all become a structured `error{class, message,
+    # backtrace}`. The run reports failure cleanly; it never guarantees atomicity
+    # (Timeout can fire mid-transaction — actions must be idempotent/retry-safe).
+    class Executor
+      Result = Struct.new(:ok, :return_value, :error, :stdout, :duration_ms, keyword_init: true)
+
+      def initialize(config)
+        @config = config
+        @compiled = {} # hex digest => compiled lambda
+        @mutex = Mutex.new
+      end
+
+      def run(script:, params:, digest:)
+        stdout = +""
+        started = clock_ms
+        # Defensive: the body is handed params AS DATA. Schema already deep-freezes
+        # the validated hash; freeze here too so the executor is correct on its own.
+        params = params.freeze
+
+        return_value = capture_stdout(stdout) do
+          callable = compile(script, digest)
+          Timeout.timeout(@config.timeout.to_f) { callable.call(params) }
+        end
+
+        ensure_serializable!(return_value)
+        success(return_value, stdout, started)
+      rescue Timeout::Error
+        failure("Timeout::Error", "action exceeded #{@config.timeout}s timeout", [], stdout, started)
+      rescue ScriptError, StandardError => e
+        failure(e.class.name, e.message.to_s, Array(e.backtrace), stdout, started)
+      end
+
+      private
+
+      def compile(script, digest)
+        hex = Resolver.hex(digest)
+        @mutex.synchronize do
+          @compiled[hex] ||= build_lambda(script, hex)
+        end
+      end
+
+      # lineno 0 means "lambda do |params|" is line 0, so the body's first line is
+      # line 1 — backtraces then carry the script's own line numbers.
+      def build_lambda(script, hex)
+        source = "lambda do |params|\n#{script}\nend"
+        eval(source, sandbox_binding, "rootcause-action(#{hex})", 0) # standard:disable Security/Eval
+      end
+
+      # A fresh top-level-ish binding: constant lookup resolves app constants
+      # (User, etc.) but no local variables from the gem leak into the script.
+      def sandbox_binding
+        TOPLEVEL_BINDING.dup
+      end
+
+      def ensure_serializable!(value)
+        JSON.generate(value)
+      rescue => e
+        raise NonSerializableResult, "return value is not JSON-serializable: #{e.message}"
+      end
+
+      def success(return_value, stdout, started)
+        Result.new(
+          ok: true,
+          return_value: return_value,
+          error: nil,
+          stdout: finalize_stdout(stdout),
+          duration_ms: elapsed_ms(started)
+        )
+      end
+
+      def failure(klass, message, backtrace, stdout, started)
+        Result.new(
+          ok: false,
+          return_value: nil,
+          error: {
+            class: klass,
+            message: message,
+            backtrace: backtrace.first(@config.max_backtrace_lines)
+          },
+          stdout: finalize_stdout(stdout),
+          duration_ms: elapsed_ms(started)
+        )
+      end
+
+      # Capture the action's $stdout. CAVEAT: $stdout is process-global, so under a
+      # multi-threaded server this also intercepts (and isolates from the real
+      # stream) any concurrent thread's output for the duration of the run. v1
+      # accepts this; disable via `config.capture_stdout = false` where it matters.
+      def capture_stdout(buffer)
+        return yield unless @config.capture_stdout
+
+        original = $stdout
+        sink = StringIO.new(buffer)
+        $stdout = sink
+        begin
+          yield
+        ensure
+          $stdout = original
+        end
+      end
+
+      def finalize_stdout(buffer)
+        return "" if buffer.nil? || buffer.empty?
+
+        max = @config.max_stdout_bytes
+        out = (buffer.bytesize > max) ? buffer.byteslice(0, max) : buffer
+        out.dup.force_encoding(Encoding::UTF_8).scrub
+      end
+
+      def elapsed_ms(started) = (clock_ms - started).round
+      def clock_ms = Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_millisecond)
+    end
+
+    # The action ran but returned something JSON can't represent — treated as a
+    # failed run, not a crash.
+    class NonSerializableResult < StandardError; end
+  end
+end

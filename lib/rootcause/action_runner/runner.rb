@@ -1,0 +1,130 @@
+# frozen_string_literal: true
+
+require "json"
+
+module RootCause
+  module ActionRunner
+    # The framework-agnostic core: one raw request body + its signature in, one
+    # signed JSON reply out. This is the verify → replay → validate → resolve →
+    # run → sign pipeline, fail-closed at every step. The Rack shell is a thin
+    # adapter over this; a Sinatra/Rack host could call it directly.
+    class Runner
+      # A signed reply, transport-agnostic. `body` is the exact JSON string the
+      # `signature` was computed over — send both verbatim (verify-on-raw).
+      Reply = Struct.new(:status, :body, :signature, keyword_init: true)
+
+      REQUIRED_FIELDS = %w[action_id script_digest nonce issued_at].freeze
+
+      def initialize(config, resolver: nil, executor: nil, nonce_store: nil)
+        @config = config
+        @resolver = resolver || Resolver.new(config)
+        @executor = executor || Executor.new(config)
+        @nonce_store = nonce_store || Replay::MemoryStore.new
+      end
+
+      # @return [Reply]
+      def handle(raw_body:, signature:)
+        invocation = authenticate(raw_body, signature)
+        result = run(invocation)
+        log(invocation, ok: result.ok, duration_ms: result.duration_ms)
+        reply(200, envelope(result))
+      rescue Error => e
+        # Every refusal lands here: bad signature, replay, schema, resolve. Reply
+        # is still signed so the host can trust the refusal.
+        log_refusal(e, raw_body)
+        reply(e.status, {ok: false, error: {class: e.code, message: e.message}})
+      end
+
+      private
+
+      # Verify first, parse second: never spend work on an unauthenticated body.
+      def authenticate(raw_body, signature)
+        unless Signature.valid?(signature, raw_body, secret: @config.secret)
+          raise SignatureError, "signature missing or invalid"
+        end
+
+        parse(raw_body)
+      end
+
+      def parse(raw_body)
+        data = JSON.parse(raw_body.to_s)
+        raise InvalidRequest, "invocation must be a JSON object" unless data.is_a?(Hash)
+
+        missing = REQUIRED_FIELDS.reject { |f| present?(data[f]) }
+        raise InvalidRequest, "missing field(s): #{missing.join(", ")}" unless missing.empty?
+
+        if data["runtime"] && data["runtime"].to_s != "ruby"
+          raise InvalidRequest, "unsupported runtime: #{data["runtime"]}"
+        end
+
+        data
+      rescue JSON::ParserError
+        raise InvalidRequest, "body is not valid JSON"
+      end
+
+      def run(invocation)
+        Replay.guard!(
+          issued_at: invocation["issued_at"],
+          nonce: invocation["nonce"],
+          clock_skew: @config.clock_skew,
+          store: @nonce_store
+        )
+
+        params = Schema.validate!(invocation["params"], invocation["schema"])
+        script = @resolver.resolve(action_id: invocation["action_id"], digest: invocation["script_digest"])
+
+        @executor.run(script: script, params: params, digest: invocation["script_digest"])
+      end
+
+      def envelope(result)
+        {
+          ok: result.ok,
+          return_value: result.return_value,
+          error: result.error,
+          stdout: result.stdout,
+          duration_ms: result.duration_ms
+        }
+      end
+
+      def reply(status, payload)
+        body = JSON.generate(payload)
+        Reply.new(status: status, body: body, signature: Signature.sign(body, secret: @config.secret))
+      end
+
+      # Customer-side audit: identifiers and shape only. Never the secret, never
+      # param values — param KEYS at most.
+      def log(invocation, ok:, duration_ms:)
+        return unless @config.logger
+
+        @config.logger.info(
+          "[rootcause-action] action_id=#{invocation["action_id"]} " \
+          "digest=#{invocation["script_digest"]} " \
+          "param_keys=#{param_keys(invocation["params"])} " \
+          "ok=#{ok} duration_ms=#{duration_ms}"
+        )
+      end
+
+      def log_refusal(error, raw_body)
+        return unless @config.logger
+
+        # Best-effort context without trusting/echoing an unauthenticated body:
+        # param KEYS only, and only if it parsed.
+        keys = safe_param_keys(raw_body)
+        @config.logger.warn("[rootcause-action] refused code=#{error.code} param_keys=#{keys} msg=#{error.message}")
+      end
+
+      def param_keys(params)
+        params.is_a?(Hash) ? params.keys.sort : []
+      end
+
+      def safe_param_keys(raw_body)
+        data = JSON.parse(raw_body.to_s)
+        param_keys(data["params"])
+      rescue JSON::ParserError, TypeError
+        []
+      end
+
+      def present?(value) = !value.nil? && value.to_s != ""
+    end
+  end
+end
