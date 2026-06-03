@@ -71,19 +71,28 @@ module RootCause
         props = stringify_keys(schema["properties"] || {})
         required = Array(schema["required"]).map(&:to_s)
         props.each_with_object({}) do |(name, spec), acc|
-          spec = stringify_keys(spec)
+          spec = spec_hash!(name, spec)
           acc[name] = {type: type_of!(name, spec), required: required.include?(name)}
         end
       end
 
       def normalize_map(schema)
         schema.each_with_object({}) do |(name, spec), acc|
-          spec = stringify_keys(spec)
+          spec = spec_hash!(name, spec)
           # required defaults to true in map form — param schemas are required
           # unless explicitly marked optional. Fail closed on absence.
           required = spec.key?("required") ? spec["required"] != false : true
           acc[name.to_s] = {type: type_of!(name, spec), required: required}
         end
+      end
+
+      # A spec must be an object carrying a `type`. A bare value (e.g. the
+      # shorthand `{"email" => "string"}`) is a malformed schema — refuse it as a
+      # SchemaError rather than letting a NoMethodError escape the pipeline.
+      def spec_hash!(name, spec)
+        raise SchemaError, "param #{name}: spec must be an object" unless spec.is_a?(Hash)
+
+        stringify_keys(spec)
       end
 
       def type_of!(name, spec)

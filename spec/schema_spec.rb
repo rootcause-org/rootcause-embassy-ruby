@@ -56,6 +56,13 @@ RSpec.describe RootCause::ActionRunner::Schema do
     expect { validate({"x" => 1}, {"x" => {"type" => "bigint"}}) }.to raise_error(SchemaError, /unsupported type/)
   end
 
+  it "rejects a bare-string spec (shorthand form) as a SchemaError, not a crash" do
+    # A malformed schema like {"email" => "string"} must fail closed with a
+    # typed SchemaError — never escape as a NoMethodError.
+    expect { validate({"email" => "x@y.z"}, {"email" => "string"}) }
+      .to raise_error(SchemaError, /must be an object/)
+  end
+
   it "returns a frozen, symbol-keyed hash with frozen values" do
     out = validate({"name" => "ann", "tags" => ["a"]}, {"name" => {"type" => "string"}, "tags" => {"type" => "string[]"}})
     expect(out).to be_frozen

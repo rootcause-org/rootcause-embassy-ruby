@@ -84,6 +84,31 @@ RSpec.describe RootCause::ActionRunner::Runner do
     expect(handle(inv).status).to eq(502)
   end
 
+  it "fail-closes an unexpected pipeline error into a signed 500 (never crashes)" do
+    # A malformed-but-authenticated invocation that trips a non-typed error must
+    # still come back as a signed, structured refusal — not an unsigned crash.
+    inv = Wire.invocation(params: {"email" => "x@y.z"}, schema: {"email" => "string"})
+    reply = handle(inv)
+    expect(reply.status).to eq(422) # SchemaError now covers the shorthand
+    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+  end
+
+  it "returns a signed 500 if a pipeline step raises an unexpected error" do
+    # Force a non-Error exception from inside the pipeline (post-auth) and prove
+    # the backstop signs and structures it rather than letting it escape.
+    allow(RootCause::ActionRunner::Schema).to receive(:validate!).and_raise(RuntimeError, "x@acme.com leaked?")
+    reply = handle(Wire.invocation)
+    expect(reply.status).to eq(500)
+    payload = body_of(reply)
+    expect(payload["ok"]).to be(false)
+    expect(payload.dig("error", "class")).to eq("internal_error")
+    # The wire message is the exception class only — never the (possibly
+    # input-bearing) exception message.
+    expect(payload.dig("error", "message")).to eq("RuntimeError")
+    expect(reply.body).not_to include("x@acme.com")
+    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+  end
+
   it "returns 200 with ok:false when the action itself raises" do
     script = "raise 'boom'"
     Wire.stub_fetch(script: script)

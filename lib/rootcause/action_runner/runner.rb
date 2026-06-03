@@ -29,10 +29,19 @@ module RootCause
         log(invocation, ok: result.ok, duration_ms: result.duration_ms)
         reply(200, envelope(result))
       rescue Error => e
-        # Every refusal lands here: bad signature, replay, schema, resolve. Reply
-        # is still signed so the host can trust the refusal.
+        # Every expected refusal lands here: bad signature, replay, schema,
+        # resolve. Reply is still signed so the host can trust the refusal.
         log_refusal(e, raw_body)
         reply(e.status, {ok: false, error: {class: e.code, message: e.message}})
+      rescue => e
+        # Fail-closed backstop. The pipeline raises typed Errors for expected
+        # refusals; anything else reaching here is an unforeseen condition (a
+        # malformed shape we didn't anticipate, or a gem bug). Still return a
+        # signed, structured 500 — never let an unsigned exception escape the
+        # handler. Message is the class only: an unexpected error's message may
+        # carry untrusted input, so we don't echo it on the wire.
+        log_refusal_unexpected(e, raw_body)
+        reply(500, {ok: false, error: {class: "internal_error", message: e.class.name}})
       end
 
       private
@@ -111,6 +120,13 @@ module RootCause
         # param KEYS only, and only if it parsed.
         keys = safe_param_keys(raw_body)
         @config.logger.warn("[rootcause-action] refused code=#{error.code} param_keys=#{keys} msg=#{error.message}")
+      end
+
+      def log_refusal_unexpected(error, raw_body)
+        return unless @config.logger
+
+        keys = safe_param_keys(raw_body)
+        @config.logger.error("[rootcause-action] refused code=internal_error class=#{error.class} param_keys=#{keys} msg=#{error.message}")
       end
 
       def param_keys(params)
