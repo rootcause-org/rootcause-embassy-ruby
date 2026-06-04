@@ -7,11 +7,13 @@ delivery) lives in
 [`rootcause-light/docs/async-analysis-host-spec.md`](https://github.com/rootcause-org/rootcause-light/blob/main/docs/async-analysis-host-spec.md)
 — read it for everything off-gem.
 
-**Stateless by design.** Each analysis is independent — rootcause keeps no conversational memory and the
-gem keeps no session state. There is no session/continuation id (provider-managed state is unavailable
-via OpenRouter and non-portable across vendors). A "follow-up" is simply another `start_analysis` whose
-`body` carries whatever prior context the caller wants included. Correlation is by `metadata` and the
-per-analysis `analysis_id`.
+**Session continuation (host-managed).** rootcause keeps the conversation history server-side, keyed by
+an opaque **`session_id`**. The first `start_analysis` omits it; the host mints one and returns it in the
+202. A follow-up passes that `session_id` back and sends **only the new message** — never prior turns,
+which the host already holds. The gem treats `session_id` as **opaque**: it stores and forwards the
+string, never interprets it (provider-managed state is unavailable via OpenRouter and non-portable across
+vendors, so the *host* owns the history and the gem only carries the key). Correlation is by `metadata`
+and the per-analysis `analysis_id`; continuation is by `session_id`.
 
 ## 1. Why this exists
 
@@ -34,14 +36,15 @@ sequenceDiagram
     participant App as Customer Rails app
     participant Gem as gem
     participant RC as rootcause host
-    App->>Gem: start_analysis(subject:, body:, metadata:)
+    App->>Gem: start_analysis(subject:, body:, metadata:, session_id: nil)
     Gem->>RC: signed trigger (reverse-channel secret)
-    RC-->>Gem: 202 { analysis_id }
-    Gem-->>App: { analysis_id }   (persist alongside the resource)
+    RC-->>Gem: 202 { analysis_id, session_id }   (host mints session_id on turn 1)
+    Gem-->>App: { analysis_id, session_id }   (persist both alongside the resource)
     Note over RC: async analysis (may take minutes)
-    RC->>Gem: signed result (draft/note/actions/..., metadata)
+    RC->>Gem: signed result (draft/note/actions/..., metadata, session_id)
     Gem->>App: ResultHandler#process(result)  → burn into your records
     Gem-->>RC: 200 signed ack
+    Note over App,RC: follow-up: start_analysis(session_id:, body: new message only)
 ```
 
 ### What this is *not* (boundary with SPEC §1)
@@ -79,8 +82,10 @@ analysis = RootCause::ActionRunner.start_analysis(
       content_base64: Base64.strict_encode64(ticket.log_file) },
   ],
   metadata: { resource_type: "SupportTicket", resource_id: ticket.id }, # echoed back verbatim
+  session_id: nil,                            # optional — omit/nil on the first turn (§2.1)
 )
 analysis.analysis_id  # => "uuid"  (rootcause run id, for audit/idempotency/correlation)
+analysis.session_id   # => "uuid"  (host-minted; persist it to continue this conversation)
 ```
 
 **Result handler** — a plain class in `app/`, the ActionMailbox/ActiveJob shape:
@@ -102,6 +107,7 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
         analysis_state:  :ready,
         ai_draft:        result.draft&.dig(:body_markdown),
         ai_note:         result.note&.dig(:body_markdown),
+        rc_session_id:   result.session_id, # persist to continue the thread later (§2.1)
       )
       # Optional human-gated side-effects → render as buttons; never auto-execute (§4).
       ticket.update!(rc_actions: result.actions)
@@ -114,6 +120,7 @@ end
 
 ```ruby
 result.analysis_id     # String   — the run id this answers
+result.session_id      # String   — host-managed conversation key; persist + forward (opaque)
 result.metadata        # Hash      — your bag, echoed back verbatim (symbol keys)
 result.draft           # { body_markdown:, body_html: } or nil
 result.note            # { body_markdown:, body_html:, body_text: } or nil
@@ -126,6 +133,28 @@ result.ok?             # decline.nil?
 
 Field names are taken **verbatim** from rootcause's `webhook.CallbackPayload` and ReplyPen's contract so
 all three products serialize identically.
+
+### 2.1 Continuing a conversation
+
+A follow-up is the **same call** with the persisted `session_id` and **only the new message** — the host
+already holds the prior turns, so the gem never re-sends them:
+
+```ruby
+RootCause::ActionRunner.start_analysis(
+  subject:    "Still failing after the reset",
+  body:       customer_reply,                  # just the new message, no prior history
+  session_id: ticket.rc_session_id,            # the id you persisted from turn 1 / the result
+  metadata:   { resource_type: "SupportTicket", resource_id: ticket.id },
+)
+```
+
+Rules:
+- **First turn** — omit `session_id` (or pass `nil`); the gem leaves it out of the body and the host mints
+  one, returned in the 202 and echoed on every subsequent result.
+- **Opaque** — the gem stores and forwards the string; it never parses, validates, or reuses it across
+  resources. Whatever the host returns is what you send back.
+- **`metadata` still rides every turn** — it is your correlation bag and is echoed back per result;
+  `session_id` is the host's history key, orthogonal to it.
 
 ## 3. Wire messages (on the reverse-channel secret)
 
@@ -140,16 +169,20 @@ body), constant-time compare, sign-then-send / verify-on-raw — identical to SP
   "body":        "plain-text content to analyze",
   "attachments": [ { "filename": "error.log", "mime_type": "text/plain", "content_base64": "…" } ],
   "metadata":    { "resource_type": "SupportTicket", "resource_id": 42 }, // opaque, echoed back
+  "session_id":  "uuid",          // OPTIONAL — present only on a follow-up; omitted on turn 1
   "nonce":       "uuid",
   "issued_at":   "2026-06-04T10:00:00Z" // ±5 min window
 }
 ```
 
-Response `202`: `{ "analysis_id": "uuid", "status": "queued" }`.
+Response `202`: `{ "analysis_id": "uuid", "session_id": "uuid", "status": "queued" }`. The host **mints**
+`session_id` on the first turn and **echoes** the same one on follow-ups; the gem surfaces it as
+`analysis.session_id`.
 
 **Analysis result** (rootcause → gem), `POST {result_mount_at}` — signed; body is the `Result` JSON
-above plus `analysis_id`, `nonce`, `issued_at`. The gem verifies signature + replay, then dispatches to
-`result_handler`. Returns a signed `200 { "ok": true }` ack.
+above plus `analysis_id`, `session_id`, `nonce`, `issued_at`. The gem verifies signature + replay, then
+dispatches to `result_handler` (which sees `result.session_id`). Returns a signed `200 { "ok": true }`
+ack.
 
 ## 4. Human-in-the-loop is preserved via `actions[]`
 
@@ -198,7 +231,7 @@ So one result can both fill a draft *and* surface approve-buttons, cleanly separ
 
 ```
 lib/rootcause/action_runner/
-├── client.rb          # start_analysis: build → sign → POST → parse {analysis_id}
+├── client.rb          # start_analysis: build → sign → POST → parse {analysis_id, session_id}
 ├── result.rb          # Result value object (symbol-keyed, frozen)
 ├── result_handler.rb  # base class; #process(result)
 └── result_rack.rb     # result route: verify → replay → dispatch → signed ack
@@ -215,6 +248,7 @@ duplicated.
 | **Result route** | sign round-trip; forged/missing signature rejected; stale/duplicate nonce rejected; dispatches to handler; returns signed ack. |
 | **Idempotency** | a redelivered result (fresh nonce) dispatches again → example handler upserts, not duplicates. |
 | **Result object** | maps `CallbackPayload` JSON → symbol-keyed accessors; `decline` → `ok? == false`; absent optional fields → nil. |
+| **Session continuation** | `session_id` present → forwarded in the trigger body; absent/blank → omitted; result exposes `session_id`; full round-trip (trigger → `result.session_id` → follow-up trigger carries it). |
 | **Handler config** | string-named handler lazy-loads; missing handler → fail closed, structured error. |
 
 Stub the rootcause origin (trigger 202 + result POST) so the suite needs no live host.

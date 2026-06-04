@@ -13,12 +13,17 @@ module RootCause
     # rootcause PROPOSES — the customer renders them for a human to click, and they
     # ride back through the gem's existing invocation route. The gem never auto-runs
     # them, so no "autonomous action" feature is needed.
+    #
+    # `session_id` is the host-managed conversation key — opaque to the gem. Persist
+    # it on the record and pass it back to start_analysis to continue the thread; a
+    # follow-up then sends only the new message (the host keeps prior history).
     class Result
-      attr_reader :analysis_id, :metadata, :draft, :note, :actions,
+      attr_reader :analysis_id, :session_id, :metadata, :draft, :note, :actions,
         :reasoning_steps, :attachments, :decline
 
-      def initialize(analysis_id:, metadata:, draft:, note:, actions:, reasoning_steps:, attachments:, decline:)
+      def initialize(analysis_id:, session_id:, metadata:, draft:, note:, actions:, reasoning_steps:, attachments:, decline:)
         @analysis_id = analysis_id
+        @session_id = session_id
         @metadata = metadata
         @draft = draft
         @note = note
@@ -41,6 +46,7 @@ module RootCause
 
         new(
           analysis_id: data[:analysis_id],
+          session_id: data[:session_id],
           metadata: data[:metadata] || EMPTY_HASH,
           draft: data[:draft],
           note: data[:note],

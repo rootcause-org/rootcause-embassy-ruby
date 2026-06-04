@@ -73,8 +73,9 @@ edge, and run under a least-privileged DB role where feasible.
 
 The opposite direction of the invocation flow, on the **same reverse-channel secret**: your app asks
 rootcause to *analyze this* and later receives the drafted answer into a Ruby handler — no polling, no
-job rig of your own. Each analysis is **stateless** (no session id); a follow-up is just another
-`start_analysis`. See [docs/async-analysis-spec.md](docs/async-analysis-spec.md).
+job rig of your own. The host keeps the conversation history keyed by an opaque **`session_id`**, so a
+follow-up sends only the new message — persist the `session_id` and pass it back. See
+[docs/async-analysis-spec.md](docs/async-analysis-spec.md).
 
 ```ruby
 # config/initializers/rootcause.rb — extends the block above
@@ -102,7 +103,8 @@ analysis = RootCause::ActionRunner.start_analysis(
                  content_base64: Base64.strict_encode64(ticket.log_file)}],
   metadata: {resource_type: "SupportTicket", resource_id: ticket.id}, # echoed back verbatim
 )
-analysis.analysis_id  # persist alongside the resource
+analysis.analysis_id   # persist alongside the resource
+analysis.session_id    # persist too — pass it back to continue this conversation
 ```
 
 A non-2xx / transport failure raises `RootCause::ActionRunner::TriggerError` (yours to retry); an
@@ -121,8 +123,9 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
       ticket.update!(analysis_state: :declined, analysis_note: result.decline[:reason])
     else
       ticket.update!(analysis_state: :ready,
-        ai_draft: result.draft&.dig(:body_markdown),
-        rc_actions: result.actions) # human-gated buttons — render, never auto-execute
+        ai_draft:        result.draft&.dig(:body_markdown),
+        rc_session_id:   result.session_id, # persist to continue the thread later
+        rc_actions:      result.actions) # human-gated buttons — render, never auto-execute
     end
   end
 end
@@ -131,6 +134,21 @@ end
 `draft` / `note` / `reasoning_steps` / `attachments` are informational (safe to auto-burn);
 **`actions[]`** are vetted side-effects rootcause *proposes* — render them for a human to click, and
 they ride back through the **invocation route**. The gem never auto-runs them.
+
+**Continue the conversation** — the host keeps the history keyed by `session_id`, so a follow-up sends
+**only the new message** (never prior turns):
+
+```ruby
+RootCause::ActionRunner.start_analysis(
+  subject:    "Still failing after the reset",
+  body:       customer_reply,                      # just the new message
+  session_id: ticket.rc_session_id,                # the id you persisted above
+  metadata:   {resource_type: "SupportTicket", resource_id: ticket.id},
+)
+```
+
+`session_id` is **opaque** to the gem — store it and forward it, never interpret it. Omit it (or pass
+`nil`) on the first turn; the host mints one and returns it in the 202.
 
 ## Multi-worker deployments
 

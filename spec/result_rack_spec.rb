@@ -82,6 +82,29 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
     expect(SpecResultHandler.store).to have_key("run-7")
   end
 
+  it "exposes the host-managed session_id on the dispatched result" do
+    handle(Wire.result(analysis_id: "s1", session_id: "sess-xyz"))
+    expect(SpecResultHandler.store.fetch("s1").session_id).to eq("sess-xyz")
+  end
+
+  it "round-trips: a delivered result's session_id rides a follow-up trigger" do
+    # Deliver a result carrying the host's session_id.
+    handle(Wire.result(analysis_id: "run-1", session_id: "sess-cont"))
+    delivered = SpecResultHandler.store.fetch("run-1")
+
+    # The customer continues the thread with ONLY the new message.
+    Wire.stub_trigger
+    RootCause::ActionRunner::Client.new(config).start_analysis(
+      subject: "follow up", body: "new turn only", session_id: delivered.session_id
+    )
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        JSON.parse(req.body)["session_id"] == "sess-cont"
+      }
+    ).to have_been_made
+  end
+
   it "dispatches a decline result (ok? == false)" do
     handle(Wire.result(analysis_id: "d1", draft: nil, decline: {"reason" => "out of scope"}))
     result = SpecResultHandler.store.fetch("d1")

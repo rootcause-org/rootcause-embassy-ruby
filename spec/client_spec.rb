@@ -37,6 +37,53 @@ RSpec.describe RootCause::ActionRunner::Client do
     ).to have_been_made
   end
 
+  it "returns the host-minted session_id from the 202" do
+    Wire.stub_trigger(analysis_id: "run-1", session_id: "sess-1")
+    analysis = client.start_analysis(subject: "s", body: "b")
+    expect(analysis.session_id).to eq("sess-1")
+  end
+
+  it "forwards session_id in the trigger body on a follow-up" do
+    Wire.stub_trigger
+    client.start_analysis(subject: "follow up", body: "more", session_id: "sess-99")
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        JSON.parse(req.body)["session_id"] == "sess-99"
+      }
+    ).to have_been_made
+  end
+
+  it "omits session_id from the trigger body on the first turn (absent/blank)" do
+    Wire.stub_trigger
+
+    client.start_analysis(subject: "first", body: "turn")                  # default nil
+    client.start_analysis(subject: "first", body: "turn", session_id: "")  # blank → omitted
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        !JSON.parse(req.body).key?("session_id")
+      }
+    ).to have_been_made.twice
+  end
+
+  it "round-trips: first turn's session_id rides the next trigger" do
+    # Turn 1 — host mints a session.
+    Wire.stub_trigger(analysis_id: "run-1", session_id: "sess-abc")
+    first = client.start_analysis(subject: "Login fails", body: "details")
+    expect(first.session_id).to eq("sess-abc")
+
+    # Turn 2 — continue that session with ONLY the new message.
+    client.start_analysis(subject: "still failing", body: "after reset", session_id: first.session_id)
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        body = JSON.parse(req.body)
+        body["session_id"] == "sess-abc" && body["subject"] == "still failing"
+      }
+    ).to have_been_made
+  end
+
   it "carries a within-cap attachment through verbatim" do
     Wire.stub_trigger
     encoded = b64("an error log")

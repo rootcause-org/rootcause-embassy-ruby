@@ -63,11 +63,12 @@ module Wire
 
   # --- async analysis ---
 
-  # Stub the host's trigger endpoint, returning the documented 202 + analysis_id.
-  def stub_trigger(analysis_id: "analysis-uuid-1", status: 202)
+  # Stub the host's trigger endpoint, returning the documented 202 with the run id
+  # and the host-minted/echoed session_id.
+  def stub_trigger(analysis_id: "analysis-uuid-1", session_id: "session-uuid-1", status: 202)
     WebMock.stub_request(:post, TRIGGER_URL).to_return(
       status: status,
-      body: JSON.generate("analysis_id" => analysis_id, "status" => "queued"),
+      body: JSON.generate("analysis_id" => analysis_id, "session_id" => session_id, "status" => "queued"),
       headers: {"content-type" => "application/json"}
     )
   end
@@ -77,6 +78,7 @@ module Wire
   def result(**overrides)
     {
       "analysis_id" => "analysis-uuid-1",
+      "session_id" => "session-uuid-1",
       "metadata" => {"resource_type" => "SupportTicket", "resource_id" => 42},
       "draft" => {"body_markdown" => "Hi there", "body_html" => "<p>Hi there</p>"},
       "note" => nil,

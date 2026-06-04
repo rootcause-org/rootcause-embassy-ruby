@@ -19,17 +19,21 @@ module RootCause
     # attachment raises ArgumentError before anything is sent.
     class Client
       # What start_analysis returns: the rootcause run id (for audit / idempotency /
-      # correlation) and the host's queue status.
-      Analysis = Struct.new(:analysis_id, :status, keyword_init: true)
+      # correlation), the host-managed conversation `session_id` (opaque — store and
+      # forward on the next turn, never interpret), and the host's queue status.
+      Analysis = Struct.new(:analysis_id, :session_id, :status, keyword_init: true)
 
       def initialize(config)
         @config = config
       end
 
+      # @param session_id [String, nil] a prior turn's host-minted session id. When
+      #   present, this turn continues that conversation — send ONLY the new
+      #   subject/body, never prior history (the host keeps it). Opaque to the gem.
       # @return [Analysis]
       # @raise [TriggerError] non-2xx, malformed response, or transport failure
       # @raise [ArgumentError] missing trigger_url, or an over-cap/malformed attachment
-      def start_analysis(subject:, body:, attachments: [], metadata: {})
+      def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil)
         url = @config.trigger_url
         raise ArgumentError, "RootCause::ActionRunner: trigger_url is not configured" if blank?(url)
 
@@ -42,6 +46,9 @@ module RootCause
           "nonce" => SecureRandom.uuid,
           "issued_at" => Time.now.utc.iso8601
         }
+        # Only carry session_id on a follow-up; the first turn omits it and the host
+        # mints one, returned in the 202 below.
+        payload["session_id"] = session_id unless blank?(session_id)
         raw = JSON.generate(payload)
 
         analysis = parse(post(url, raw))
@@ -112,7 +119,11 @@ module RootCause
           raise TriggerError, "analysis trigger response missing analysis_id"
         end
 
-        Analysis.new(analysis_id: data["analysis_id"], status: data["status"]).freeze
+        Analysis.new(
+          analysis_id: data["analysis_id"],
+          session_id: data["session_id"],
+          status: data["status"]
+        ).freeze
       rescue JSON::ParserError
         raise TriggerError, "analysis trigger response was not valid JSON"
       end

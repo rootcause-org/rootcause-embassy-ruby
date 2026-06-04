@@ -23,6 +23,15 @@ RSpec.describe RootCause::ActionRunner::Result do
     expect(result.metadata).to be_frozen
   end
 
+  it "exposes the session_id from the result envelope" do
+    result = described_class.from_payload("analysis_id" => "r", "session_id" => "sess-1")
+    expect(result.session_id).to eq("sess-1")
+  end
+
+  it "leaves session_id nil when the envelope omits it" do
+    expect(described_class.from_payload("analysis_id" => "r").session_id).to be_nil
+  end
+
   it "is ok? when there is no decline" do
     expect(described_class.from_payload("analysis_id" => "r").ok?).to be(true)
   end
