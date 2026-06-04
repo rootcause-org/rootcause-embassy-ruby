@@ -3,9 +3,15 @@
 **Status:** proposal (v1). Extends [SPEC.md](../SPEC.md). This is the **gem's slice** of a new
 capability: the customer's app **triggers an analysis** on the rootcause host and later **receives the
 result** asynchronously into a Ruby handler. The host side (ingest endpoint, run lifecycle, result
-delivery, session memory) lives in
+delivery) lives in
 [`rootcause-light/docs/async-analysis-host-spec.md`](https://github.com/rootcause-org/rootcause-light/blob/main/docs/async-analysis-host-spec.md)
 — read it for everything off-gem.
+
+**Stateless by design.** Each analysis is independent — rootcause keeps no conversational memory and the
+gem keeps no session state. There is no session/continuation id (provider-managed state is unavailable
+via OpenRouter and non-portable across vendors). A "follow-up" is simply another `start_analysis` whose
+`body` carries whatever prior context the caller wants included. Correlation is by `metadata` and the
+per-analysis `analysis_id`.
 
 ## 1. Why this exists
 
@@ -28,12 +34,12 @@ sequenceDiagram
     participant App as Customer Rails app
     participant Gem as gem
     participant RC as rootcause host
-    App->>Gem: start_analysis(subject:, body:, metadata:, session_id?)
+    App->>Gem: start_analysis(subject:, body:, metadata:)
     Gem->>RC: signed trigger (reverse-channel secret)
-    RC-->>Gem: 202 { analysis_id, session_id }
-    Gem-->>App: { analysis_id, session_id }   (persist alongside the resource)
+    RC-->>Gem: 202 { analysis_id }
+    Gem-->>App: { analysis_id }   (persist alongside the resource)
     Note over RC: async analysis (may take minutes)
-    RC->>Gem: signed result (draft/note/actions/.../session_id, metadata)
+    RC->>Gem: signed result (draft/note/actions/..., metadata)
     Gem->>App: ResultHandler#process(result)  → burn into your records
     Gem-->>RC: 200 signed ack
 ```
@@ -73,10 +79,8 @@ analysis = RootCause::ActionRunner.start_analysis(
       content_base64: Base64.strict_encode64(ticket.log_file) },
   ],
   metadata: { resource_type: "SupportTicket", resource_id: ticket.id }, # echoed back verbatim
-  session_id: nil,                            # omit to start fresh; pass to continue (see §5)
 )
-analysis.analysis_id  # => "uuid"  (rootcause run id, for audit/idempotency)
-analysis.session_id   # => "uuid"  (minted by rootcause if you didn't pass one — PERSIST IT)
+analysis.analysis_id  # => "uuid"  (rootcause run id, for audit/idempotency/correlation)
 ```
 
 **Result handler** — a plain class in `app/`, the ActionMailbox/ActiveJob shape:
@@ -96,7 +100,6 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
     else
       ticket.update!(
         analysis_state:  :ready,
-        rc_session_id:   result.session_id,          # keep for a follow-up (§5)
         ai_draft:        result.draft&.dig(:body_markdown),
         ai_note:         result.note&.dig(:body_markdown),
       )
@@ -111,7 +114,6 @@ end
 
 ```ruby
 result.analysis_id     # String   — the run id this answers
-result.session_id      # String   — carry into a follow-up start_analysis to continue (§5)
 result.metadata        # Hash      — your bag, echoed back verbatim (symbol keys)
 result.draft           # { body_markdown:, body_html: } or nil
 result.note            # { body_markdown:, body_html:, body_text: } or nil
@@ -138,17 +140,16 @@ body), constant-time compare, sign-then-send / verify-on-raw — identical to SP
   "body":        "plain-text content to analyze",
   "attachments": [ { "filename": "error.log", "mime_type": "text/plain", "content_base64": "…" } ],
   "metadata":    { "resource_type": "SupportTicket", "resource_id": 42 }, // opaque, echoed back
-  "session_id":  null,                  // null = fresh; uuid = continue (host §5)
   "nonce":       "uuid",
   "issued_at":   "2026-06-04T10:00:00Z" // ±5 min window
 }
 ```
 
-Response `202`: `{ "analysis_id": "uuid", "session_id": "uuid", "status": "queued" }`.
+Response `202`: `{ "analysis_id": "uuid", "status": "queued" }`.
 
 **Analysis result** (rootcause → gem), `POST {result_mount_at}` — signed; body is the `Result` JSON
-above plus `analysis_id`, `session_id`, `nonce`, `issued_at`. The gem verifies signature + replay, then
-dispatches to `result_handler`. Returns a signed `200 { "ok": true }` ack.
+above plus `analysis_id`, `nonce`, `issued_at`. The gem verifies signature + replay, then dispatches to
+`result_handler`. Returns a signed `200 { "ok": true }` ack.
 
 ## 4. Human-in-the-loop is preserved via `actions[]`
 
@@ -163,30 +164,18 @@ The split that keeps the SPEC §1 invariant intact:
 So one result can both fill a draft *and* surface approve-buttons, cleanly separated by field. No
 "autonomous action" feature is needed.
 
-## 5. `session_id` and continuation
-
-`session_id` is carried end-to-end: optional input to `start_analysis`, always present on the result,
-re-passable into a follow-up `start_analysis` to **stay in the same session**.
-
-**Honest limitation (v1):** rootcause is **stateless today** — it accepts `session_id` but does not yet
-reuse prior context across runs (`rootcause-light/internal/api/prompt.go` discards it for context;
-`rootcause-light/SPEC.md §3` "Postgres is plumbing, not memory"). So **passing `session_id` correlates
-logs/audit but does not yet make the follow-up smarter.** True continuation (rootcause stitching prior
-results into the new run) is a **net-new host feature** — see the host spec's "Session continuation"
-section. The gem contract is built to carry it now so no gem change is needed when the host gains memory.
-
-## 6. Idempotency & fail-closed
+## 5. Idempotency & fail-closed
 
 - **Result redelivery is when-not-if.** If the gem's ack is lost, rootcause retries. The replay-guard
   (±5 min window + nonce) rejects same-window duplicates; a retry *outside* the window is a fresh nonce
   and **will** dispatch again. Therefore **`ResultHandler#process` must be idempotent** — upsert by
-  `metadata` (or `analysis_id`/`session_id`), never blind-insert. Documented loudly, enforced by example.
+  `metadata` (or `analysis_id`), never blind-insert. Documented loudly, enforced by example.
 - **Fail closed** (mirrors SPEC §3): bad signature, stale/duplicate nonce, missing required fields,
   unconfigured `result_handler` → refuse, signed structured error, log it.
 - **Trigger failures** (`start_analysis`): non-2xx / timeout → raise a `RootCause::ActionRunner::TriggerError`;
   the caller decides whether to retry (the call is the customer's, so no silent swallow).
 
-## 7. Attachments (v1 constraints)
+## 6. Attachments (v1 constraints)
 
 - **Body is plain text only.** No markdown/HTML split on the trigger (the result keeps rootcause's
   `body_markdown`/`body_html` fields for output).
@@ -194,7 +183,7 @@ section. The gem contract is built to carry it now so no gem change is needed wh
   Over-cap → `start_analysis` raises before sending. Large files / fetch-URLs are **out of scope** (SPEC
   §11) — same posture as ReplyPen.
 
-## 8. Security (deltas from SPEC §7)
+## 7. Security (deltas from SPEC §7)
 
 - **Same secret, same primitives.** Reverse-channel HMAC, constant-time, verify-on-raw, replay window —
   no new crypto, no new secret.
@@ -205,11 +194,11 @@ section. The gem contract is built to carry it now so no gem change is needed wh
 - The result route should be restricted to rootcause's egress IP at the edge, same recommendation as the
   invocation route (SPEC §4).
 
-## 9. Layout (new files)
+## 8. Layout (new files)
 
 ```
 lib/rootcause/action_runner/
-├── client.rb          # start_analysis: build → sign → POST → parse {analysis_id, session_id}
+├── client.rb          # start_analysis: build → sign → POST → parse {analysis_id}
 ├── result.rb          # Result value object (symbol-keyed, frozen)
 ├── result_handler.rb  # base class; #process(result)
 └── result_rack.rb     # result route: verify → replay → dispatch → signed ack
@@ -218,20 +207,19 @@ lib/rootcause/action_runner/
 `signature.rb`, `replay.rb`, the Net::HTTP pattern in `resolver.rb`, and `config.rb` are **reused**, not
 duplicated.
 
-## 10. Testing (mirrors SPEC §10)
+## 9. Testing (mirrors SPEC §10)
 
 | Area | What |
 |---|---|
-| **Trigger** | builds the documented body; signs correctly; parses `analysis_id`/`session_id`; non-2xx → `TriggerError`; over-cap attachment → raises pre-send. |
+| **Trigger** | builds the documented body; signs correctly; parses `analysis_id`; non-2xx → `TriggerError`; over-cap attachment → raises pre-send. |
 | **Result route** | sign round-trip; forged/missing signature rejected; stale/duplicate nonce rejected; dispatches to handler; returns signed ack. |
 | **Idempotency** | a redelivered result (fresh nonce) dispatches again → example handler upserts, not duplicates. |
 | **Result object** | maps `CallbackPayload` JSON → symbol-keyed accessors; `decline` → `ok? == false`; absent optional fields → nil. |
-| **session_id** | round-trips trigger → result → follow-up trigger. |
 | **Handler config** | string-named handler lazy-loads; missing handler → fail closed, structured error. |
 
 Stub the rootcause origin (trigger 202 + result POST) so the suite needs no live host.
 
-## 11. Open questions
+## 10. Open questions
 
 1. **Trigger auth shape** — sign the raw JSON body (chosen here, consistent with invocations) vs. a
    bearer token like the Prompt API. Reverse-channel HMAC keeps it to one secret; confirm with host.
