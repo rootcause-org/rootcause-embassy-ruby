@@ -34,3 +34,5 @@
 
 # Claude Code local settings (keep CLAUDE.md symlink, ignore local overrides)
 .claude/settings.local.json
+
+todo.md
