@@ -45,6 +45,25 @@ module RootCause
       # HTTP open/read timeouts for the script fetch (seconds).
       attr_accessor :http_open_timeout, :http_read_timeout
 
+      # --- async analysis (see docs/async-analysis-spec.md) ---
+
+      # Where start_analysis POSTs the signed trigger, e.g.
+      # "https://<rootcause>/analyses/<project>". Required only to trigger.
+      attr_accessor :trigger_url
+
+      # Route that receives async results. Mounted like mount_at; firewall it to
+      # rootcause's egress IP, same recommendation as the invocation route.
+      attr_accessor :result_mount_at
+
+      # Customer's result handler, as a class NAME string (lazy-loaded, reload-safe)
+      # so Rails autoload/reload picks up edits. A Class or handler instance is also
+      # accepted. Required only to receive results.
+      attr_accessor :result_handler
+
+      # Per-attachment inline cap in DECODED bytes; start_analysis raises before
+      # sending anything larger. Large files / fetch-URLs are out of scope (v1).
+      attr_accessor :max_attachment_bytes
+
       def initialize
         @mount_at = "/rootcause/action"
         @timeout = 20
@@ -56,6 +75,8 @@ module RootCause
         @logger = Logger.new($stdout)
         @http_open_timeout = 5
         @http_read_timeout = 15
+        @result_mount_at = "/rootcause/result"
+        @max_attachment_bytes = 256 * 1024
       end
 
       # Fail closed at boot rather than on the first invocation: a missing secret

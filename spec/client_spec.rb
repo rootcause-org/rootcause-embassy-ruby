@@ -1,0 +1,130 @@
+# frozen_string_literal: true
+
+# The outbound trigger: build → sign → POST → parse {analysis_id}. The host's
+# trigger endpoint is stubbed via Wire (202 + analysis_id); no live host.
+RSpec.describe RootCause::ActionRunner::Client do
+  let(:config) { Wire.config }
+  let(:client) { described_class.new(config) }
+
+  # Strict base64, stdlib only (matches the gem's decode path).
+  def b64(str) = [str].pack("m0")
+
+  it "builds the documented body, signs the raw JSON, and returns the analysis_id" do
+    Wire.stub_trigger(analysis_id: "run-123")
+
+    analysis = client.start_analysis(
+      subject: "Login fails",
+      body: "plain text",
+      metadata: {resource_type: "SupportTicket", resource_id: 42}
+    )
+
+    expect(analysis.analysis_id).to eq("run-123")
+    expect(analysis.status).to eq("queued")
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        body = JSON.parse(req.body)
+        sig_ok = RootCause::ActionRunner::Signature.valid?(
+          req.headers["X-Webhook-Signature"], req.body, secret: Wire::SECRET
+        )
+        sig_ok &&
+          body["subject"] == "Login fails" &&
+          body["body"] == "plain text" &&
+          body["metadata"] == {"resource_type" => "SupportTicket", "resource_id" => 42} &&
+          body["nonce"].is_a?(String) && !body["nonce"].empty? &&
+          body["issued_at"].is_a?(String)
+      }
+    ).to have_been_made
+  end
+
+  it "carries a within-cap attachment through verbatim" do
+    Wire.stub_trigger
+    encoded = b64("an error log")
+
+    client.start_analysis(
+      subject: "s", body: "b",
+      attachments: [{filename: "error.log", mime_type: "text/plain", content_base64: encoded}]
+    )
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        att = JSON.parse(req.body)["attachments"].first
+        att == {"filename" => "error.log", "mime_type" => "text/plain", "content_base64" => encoded}
+      }
+    ).to have_been_made
+  end
+
+  it "raises ArgumentError BEFORE sending when an attachment is over the cap" do
+    config.max_attachment_bytes = 8
+    stub = Wire.stub_trigger
+
+    expect {
+      client.start_analysis(
+        subject: "s", body: "b",
+        attachments: [{filename: "big.bin", mime_type: "application/octet-stream", content_base64: b64("x" * 64)}]
+      )
+    }.to raise_error(ArgumentError, /exceeds max_attachment_bytes/)
+
+    expect(stub).not_to have_been_requested
+  end
+
+  it "raises ArgumentError on malformed base64, before sending" do
+    stub = Wire.stub_trigger
+    expect {
+      client.start_analysis(
+        subject: "s", body: "b",
+        attachments: [{filename: "x", mime_type: "text/plain", content_base64: "not valid base64!!!"}]
+      )
+    }.to raise_error(ArgumentError, /not valid/)
+    expect(stub).not_to have_been_requested
+  end
+
+  it "raises TriggerError on a non-2xx response" do
+    Wire.stub_trigger(status: 500)
+    expect {
+      client.start_analysis(subject: "s", body: "b")
+    }.to raise_error(RootCause::ActionRunner::TriggerError, /500/)
+  end
+
+  it "raises TriggerError when the response omits analysis_id" do
+    WebMock.stub_request(:post, Wire::TRIGGER_URL).to_return(
+      status: 202, body: JSON.generate("status" => "queued")
+    )
+    expect {
+      client.start_analysis(subject: "s", body: "b")
+    }.to raise_error(RootCause::ActionRunner::TriggerError, /missing analysis_id/)
+  end
+
+  it "raises TriggerError on a transport failure" do
+    WebMock.stub_request(:post, Wire::TRIGGER_URL).to_timeout
+    expect {
+      client.start_analysis(subject: "s", body: "b")
+    }.to raise_error(RootCause::ActionRunner::TriggerError, /trigger failed/)
+  end
+
+  it "raises ArgumentError when trigger_url is unconfigured" do
+    config.trigger_url = nil
+    expect {
+      client.start_analysis(subject: "s", body: "b")
+    }.to raise_error(ArgumentError, /trigger_url is not configured/)
+  end
+
+  describe "logging" do
+    let(:logger) { instance_double(Logger, info: nil) }
+    let(:config) { Wire.config(logger: logger) }
+
+    it "logs the analysis_id and metadata KEYS — never values" do
+      Wire.stub_trigger(analysis_id: "run-9")
+      client.start_analysis(
+        subject: "s", body: "b",
+        metadata: {resource_type: "SupportTicket", resource_id: 42}
+      )
+      expect(logger).to have_received(:info) do |line|
+        expect(line).to include("analysis_id=run-9")
+        expect(line).to include("metadata_keys=[\"resource_id\", \"resource_type\"]")
+        expect(line).not_to include("SupportTicket")
+        expect(line).not_to include("42")
+      end
+    end
+  end
+end

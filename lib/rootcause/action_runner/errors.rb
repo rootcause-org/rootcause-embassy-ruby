@@ -45,5 +45,19 @@ module RootCause
       def status = 502
       def code = "resolve_failed"
     end
+
+    # The result route could not dispatch: `result_handler` is unconfigured or its
+    # named class cannot be loaded. A deploy mistake → signed structured refusal.
+    class HandlerError < Error
+      def status = 500
+      def code = "handler_error"
+    end
+
+    # Raised to the CALLER of `start_analysis`, never turned into a signed reply:
+    # the analysis trigger got a non-2xx, a malformed response, or a transport
+    # failure. The call is the customer's, so we surface it rather than swallow it
+    # — the caller decides whether to retry. (A bad/over-cap attachment raises
+    # ArgumentError before anything is sent — it is not retryable.)
+    class TriggerError < StandardError; end
   end
 end

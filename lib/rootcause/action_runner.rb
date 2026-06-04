@@ -4,12 +4,17 @@ require_relative "action_runner/version"
 require_relative "action_runner/errors"
 require_relative "action_runner/config"
 require_relative "action_runner/signature"
+require_relative "action_runner/http"
 require_relative "action_runner/schema"
 require_relative "action_runner/replay"
 require_relative "action_runner/resolver"
 require_relative "action_runner/executor"
 require_relative "action_runner/runner"
 require_relative "action_runner/rack"
+require_relative "action_runner/result"
+require_relative "action_runner/result_handler"
+require_relative "action_runner/client"
+require_relative "action_runner/result_rack"
 
 module RootCause
   # The customer-side action runner. Configure once at boot; the mounted RackApp
@@ -31,6 +36,8 @@ module RootCause
         config.validate!
         @config = config
         @runner = Runner.new(config)
+        @client = Client.new(config)
+        @result_receiver = ResultReceiver.new(config)
         config
       end
 
@@ -42,10 +49,26 @@ module RootCause
         @runner || raise("RootCause::ActionRunner is not configured — call .configure first")
       end
 
+      def client
+        @client || raise("RootCause::ActionRunner is not configured — call .configure first")
+      end
+
+      def result_receiver
+        @result_receiver || raise("RootCause::ActionRunner is not configured — call .configure first")
+      end
+
+      # Outbound trigger: ask rootcause to analyze something and get an analysis_id
+      # back to persist alongside your resource. See Client#start_analysis.
+      def start_analysis(...)
+        client.start_analysis(...)
+      end
+
       # Test/boot-order seam: drop the configured singletons.
       def reset!
         @config = nil
         @runner = nil
+        @client = nil
+        @result_receiver = nil
       end
     end
   end

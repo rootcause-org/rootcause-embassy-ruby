@@ -7,6 +7,7 @@ require "digest"
 module Wire
   SECRET = "test-reverse-channel-secret"
   FETCH_URL = "https://rootcause.test/actions/script"
+  TRIGGER_URL = "https://rootcause.test/analyses/test-project"
 
   module_function
 
@@ -53,9 +54,38 @@ module Wire
     cfg = RootCause::ActionRunner::Config.new
     cfg.secret = SECRET
     cfg.fetch_url = FETCH_URL
+    cfg.trigger_url = TRIGGER_URL
     cfg.logger = nil
     cfg.cache_dir = nil # memory-only in tests; no tmp pollution
     overrides.each { |k, v| cfg.public_send("#{k}=", v) }
     cfg
+  end
+
+  # --- async analysis ---
+
+  # Stub the host's trigger endpoint, returning the documented 202 + analysis_id.
+  def stub_trigger(analysis_id: "analysis-uuid-1", status: 202)
+    WebMock.stub_request(:post, TRIGGER_URL).to_return(
+      status: status,
+      body: JSON.generate("analysis_id" => analysis_id, "status" => "queued"),
+      headers: {"content-type" => "application/json"}
+    )
+  end
+
+  # A valid result body (Ruby hash) as rootcause POSTs to the result route.
+  # Override or add CallbackPayload fields via kwargs.
+  def result(**overrides)
+    {
+      "analysis_id" => "analysis-uuid-1",
+      "metadata" => {"resource_type" => "SupportTicket", "resource_id" => 42},
+      "draft" => {"body_markdown" => "Hi there", "body_html" => "<p>Hi there</p>"},
+      "note" => nil,
+      "actions" => [],
+      "reasoning_steps" => [],
+      "attachments" => [],
+      "decline" => nil,
+      "nonce" => "result-nonce-#{rand(1_000_000)}",
+      "issued_at" => Time.now.utc.iso8601
+    }.merge(overrides)
   end
 end

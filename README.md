@@ -69,6 +69,69 @@ edge, and run under a least-privileged DB role where feasible.
 - **The digest is the authorization unit.** A body runs **iff** its `sha256` equals the
   `script_digest` in the signed invocation.
 
+## Async analysis (trigger + result callback)
+
+The opposite direction of the invocation flow, on the **same reverse-channel secret**: your app asks
+rootcause to *analyze this* and later receives the drafted answer into a Ruby handler — no polling, no
+job rig of your own. Each analysis is **stateless** (no session id); a follow-up is just another
+`start_analysis`. See [docs/async-analysis-spec.md](docs/async-analysis-spec.md).
+
+```ruby
+# config/initializers/rootcause.rb — extends the block above
+RootCause::ActionRunner.configure do |c|
+  # ... secret / fetch_url as above ...
+  c.trigger_url     = "https://<rootcause>/analyses/<project>" # where start_analysis POSTs
+  c.result_mount_at = "/rootcause/result"                      # route that receives async results
+  c.result_handler  = "AnalysisResultHandler"                  # String → lazy-loaded, reload-safe
+  c.max_attachment_bytes = 256 * 1024                          # per-attachment inline cap (decoded)
+end
+```
+
+```ruby
+# config/routes.rb — mount the result route alongside the invocation route
+mount RootCause::ActionRunner::ResultRackApp.new => RootCause::ActionRunner.config.result_mount_at
+```
+
+**Trigger** from anywhere in your code:
+
+```ruby
+analysis = RootCause::ActionRunner.start_analysis(
+  subject: ticket.subject,
+  body:    ticket.body,                       # plain text only (v1)
+  attachments: [{filename: "error.log", mime_type: "text/plain",
+                 content_base64: Base64.strict_encode64(ticket.log_file)}],
+  metadata: {resource_type: "SupportTicket", resource_id: ticket.id}, # echoed back verbatim
+)
+analysis.analysis_id  # persist alongside the resource
+```
+
+A non-2xx / transport failure raises `RootCause::ActionRunner::TriggerError` (yours to retry); an
+over-cap or malformed attachment raises `ArgumentError` before anything is sent.
+
+**Handle the result** — a plain class in `app/`, idempotent (rootcause **redelivers** on a lost ack):
+
+```ruby
+# app/rootcause/analysis_result_handler.rb
+class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
+  def process(result)
+    return unless result.metadata[:resource_type] == "SupportTicket"
+    ticket = SupportTicket.find_by(id: result.metadata[:resource_id]) or return
+
+    if result.decline
+      ticket.update!(analysis_state: :declined, analysis_note: result.decline[:reason])
+    else
+      ticket.update!(analysis_state: :ready,
+        ai_draft: result.draft&.dig(:body_markdown),
+        rc_actions: result.actions) # human-gated buttons — render, never auto-execute
+    end
+  end
+end
+```
+
+`draft` / `note` / `reasoning_steps` / `attachments` are informational (safe to auto-burn);
+**`actions[]`** are vetted side-effects rootcause *proposes* — render them for a human to click, and
+they ride back through the **invocation route**. The gem never auto-runs them.
+
 ## Multi-worker deployments
 
 The default nonce store is an in-process, TTL-pruned set — correct for a **single process**. Across
@@ -78,6 +141,13 @@ to `add?(nonce, ttl:)`, e.g. a `Rails.cache`-backed adapter using `write(unless_
 ```ruby
 runner = RootCause::ActionRunner::Runner.new(RootCause::ActionRunner.config, nonce_store: MyCacheStore.new)
 mount RootCause::ActionRunner::RackApp.new(runner: runner) => "/rootcause/action"
+```
+
+The **result route** has its own nonce store with the same caveat — inject a shared one the same way:
+
+```ruby
+receiver = RootCause::ActionRunner::ResultReceiver.new(RootCause::ActionRunner.config, nonce_store: MyCacheStore.new)
+mount RootCause::ActionRunner::ResultRackApp.new(receiver: receiver) => "/rootcause/result"
 ```
 
 Likewise, `capture_stdout` swaps the **process-global** `$stdout` for the duration of a run; under a

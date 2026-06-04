@@ -130,12 +130,7 @@ module RootCause
         request = Net::HTTP::Get.new(uri)
         request[Signature::HEADER] = signature
 
-        Net::HTTP.start(
-          uri.host, uri.port,
-          use_ssl: uri.scheme == "https",
-          open_timeout: @config.http_open_timeout,
-          read_timeout: @config.http_read_timeout
-        ) { |http| http.request(request) }
+        Http.perform(uri, request, open_timeout: @config.http_open_timeout, read_timeout: @config.http_read_timeout)
       end
 
       # The script's integrity rests on the digest check, but the channel is also
