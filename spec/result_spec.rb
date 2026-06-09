@@ -62,6 +62,34 @@ RSpec.describe RootCause::ActionRunner::Result do
       expect(result.note).to eq("<p>summary html</p>")
     end
 
+    it "selects the summary by the host's `key` discriminator, ignoring trace notes" do
+      result = described_class.from_payload(
+        "notes" => [
+          {"key" => "trace", "body_markdown" => "[trace](https://trace)"},
+          {"key" => "summary", "body_markdown" => "the summary"}
+        ]
+      )
+      expect(result.note).to eq("the summary")
+    end
+
+    it "returns the summary regardless of array order (trace note never clobbers it)" do
+      summary = {"key" => "summary", "body_markdown" => "the summary"}
+      trace = {"key" => "trace", "body_markdown" => "[trace](https://trace)"}
+
+      expect(described_class.from_payload("notes" => [summary, trace]).note).to eq("the summary")
+      expect(described_class.from_payload("notes" => [trace, summary]).note).to eq("the summary")
+    end
+
+    it "accepts legacy `kind` as a fallback discriminator" do
+      result = described_class.from_payload(
+        "notes" => [
+          {"kind" => "trace", "body_markdown" => "trace"},
+          {"kind" => "summary", "body_markdown" => "the summary"}
+        ]
+      )
+      expect(result.note).to eq("the summary")
+    end
+
     it "falls back to the first note when none is marked summary" do
       result = described_class.from_payload("notes" => [{"body_markdown" => "lone note"}])
       expect(result.note).to eq("lone note")
@@ -71,6 +99,15 @@ RSpec.describe RootCause::ActionRunner::Result do
       expect(described_class.from_payload({}).note).to be_nil
       expect(described_class.from_payload("notes" => []).note).to be_nil
     end
+  end
+
+  it "exposes the run-trace link via metadata[:trace_url], not via a note" do
+    result = described_class.from_payload(
+      "metadata" => {"trace_url" => "https://trace/run-1"},
+      "notes" => [{"key" => "summary", "body_markdown" => "the summary"}]
+    )
+    expect(result.metadata[:trace_url]).to eq("https://trace/run-1")
+    expect(result.note).to eq("the summary")
   end
 
   it "exposes the session_id from the result envelope" do

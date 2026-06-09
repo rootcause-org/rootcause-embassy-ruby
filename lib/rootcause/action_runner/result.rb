@@ -16,10 +16,12 @@ module RootCause
     #
     # `draft` and `note` are surfaced as **markdown strings**, not the raw nested
     # nodes: `draft` is the drafted answer's `body_markdown`; `note` is the SUMMARY
-    # note's `body_markdown` (rootcause delivers `notes[]` — one summary note plus
-    # zero or more widget notes; we surface only the summary, whose body carries the
-    # run-trace as a markdown link). HTML is a fallback only when markdown is absent
-    # (the host is migrating notes from `body_html` to `body_markdown`).
+    # note's `body_markdown` (rootcause delivers `notes[]` keyed by `key` — one
+    # `summary` note plus zero or more other-keyed notes, e.g. a `trace` link note;
+    # we surface only the summary). HTML is a fallback only when markdown is absent
+    # (the host is migrating notes from `body_html` to `body_markdown`). The run-trace
+    # link is read programmatically from `metadata[:trace_url]`, not parsed out of a
+    # note body.
     #
     # `session_id` is the host-managed conversation key — opaque to the gem. Persist
     # it on the record and pass it back to start_analysis to continue the thread; a
@@ -28,9 +30,11 @@ module RootCause
       attr_reader :analysis_id, :session_id, :metadata, :draft, :note, :actions,
         :reasoning_steps, :attachments, :decline
 
-      # The note kind that carries the human-facing summary. Other kinds (widgets)
-      # are rendered separately by rootcause and never surfaced here.
-      SUMMARY_KIND = "summary"
+      # The note `key` that carries the human-facing summary. The host
+      # (webhook.CallbackNote) discriminates notes by `key` — NoteKeySummary; other
+      # keys (e.g. NoteKeyTrace) are surfaced elsewhere (trace via metadata[:trace_url])
+      # and never burned into `note`.
+      SUMMARY_KEY = "summary"
 
       def initialize(analysis_id:, session_id:, metadata:, draft:, note:, actions:, reasoning_steps:, attachments:, decline:)
         @analysis_id = analysis_id
@@ -82,13 +86,24 @@ module RootCause
         blank?(value) ? nil : value
       end
 
-      # Pick the single summary note out of `notes[]`. Match by SUMMARY_KIND; if the
-      # host marks none (e.g. a lone unkinded note), fall back to the first so a
-      # single-note payload still surfaces. Widget notes are never concatenated.
+      # Pick the single summary note out of `notes[]`. The host discriminates by
+      # `key` (webhook.CallbackNote.Key); we accept legacy `kind` as a fallback. When
+      # the host marks none explicitly, fall back to the first so a single unkeyed
+      # note still surfaces — but an explicit summary always wins over array order, so
+      # a later "trace" note can never clobber it. Other-keyed notes are never
+      # surfaced here (the trace link is read from metadata[:trace_url]).
       def self.summary_note(notes)
         return nil unless notes.is_a?(Array) && !notes.empty?
 
-        notes.find { |n| n.is_a?(Hash) && n[:kind].to_s == SUMMARY_KIND } || notes.first
+        notes.find { |n| note_key(n) == SUMMARY_KEY } || notes.first
+      end
+
+      # The discriminator for a note node: prefer `key` (what the host emits), accept
+      # legacy `kind`. nil for a non-Hash or an unkeyed note.
+      def self.note_key(node)
+        return nil unless node.is_a?(Hash)
+
+        (node[:key] || node[:kind])&.to_s
       end
 
       def self.blank?(value) = value.nil? || value.to_s == ""
