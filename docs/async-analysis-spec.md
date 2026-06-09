@@ -88,7 +88,29 @@ analysis.analysis_id  # => "uuid"  (rootcause run id, for audit/idempotency/corr
 analysis.session_id   # => "uuid"  (host-minted; persist it to continue this conversation)
 ```
 
-**Result handler** — a plain class in `app/`, the ActionMailbox/ActiveJob shape:
+**Trigger from a job** — keep the controller fast; retry on `TriggerError` is the job's:
+
+```ruby
+# app/jobs/analyze_ticket_job.rb
+class AnalyzeTicketJob < ApplicationJob
+  def perform(ticket)
+    analysis = RootCause::ActionRunner.start_analysis(
+      subject:    ticket.subject,
+      body:       ticket.body,                                       # plain text only (v1)
+      metadata:   {resource_type: "SupportTicket", resource_id: ticket.id},
+      session_id: ticket.rc_session_id,                              # nil on turn 1 (§2.1)
+    )
+    ticket.update!(
+      rc_analysis_id: analysis.analysis_id,
+      rc_session_id:  analysis.session_id,                          # persist to continue (§2.1)
+      analysis_state: :pending,
+    )
+  end
+end
+```
+
+**Result handler** — a plain class in `app/`, the ActionMailbox/ActiveJob shape. `result.draft` and
+`result.note` are **markdown strings** (§2.2) — write them straight into the record:
 
 ```ruby
 # app/rootcause/analysis_result_handler.rb
@@ -105,8 +127,8 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
     else
       ticket.update!(
         analysis_state:  :ready,
-        ai_draft:        result.draft&.dig(:body_markdown),
-        ai_note:         result.note&.dig(:body_markdown),
+        ai_draft:        result.draft, # markdown string (the drafted answer)
+        ai_note:         result.note,  # markdown string (the summary note)
         rc_session_id:   result.session_id, # persist to continue the thread later (§2.1)
       )
       # Optional human-gated side-effects → render as buttons; never auto-execute (§4).
@@ -122,8 +144,8 @@ end
 result.analysis_id     # String   — the run id this answers
 result.session_id      # String   — host-managed conversation key; persist + forward (opaque)
 result.metadata        # Hash      — your bag, echoed back verbatim (symbol keys)
-result.draft           # { body_markdown:, body_html: } or nil
-result.note            # { body_markdown:, body_html:, body_text: } or nil
+result.draft           # String    — the drafted answer, MARKDOWN (or nil)
+result.note            # String    — the SUMMARY note, MARKDOWN (or nil); see §2.2
 result.actions         # [ { id:, label:, description:, url:, color: } ]  (human-gated; see §4)
 result.reasoning_steps # [String]
 result.attachments     # [ { filename:, mime_type:, content_base64: } ]
@@ -133,6 +155,20 @@ result.ok?             # decline.nil?
 
 Field names are taken **verbatim** from rootcause's `webhook.CallbackPayload` and ReplyPen's contract so
 all three products serialize identically.
+
+### 2.2 `draft` and `note` are markdown
+
+The result delivers a `draft` node and a `notes[]` array. The gem surfaces them as **markdown strings**,
+not raw nodes:
+
+- **`result.draft`** is the draft's `body_markdown`.
+- **`result.note`** is the **summary** note's `body_markdown`. rootcause delivers one summary note
+  (`kind: "summary"`) plus zero or more **widget** notes; the gem returns only the summary — it never
+  concatenates widget notes. The run-trace is a markdown link **inside** that summary note.
+- **HTML is a fallback only.** rootcause is migrating notes from `body_html` to `body_markdown`; if
+  `body_markdown` is absent the gem falls back to `body_html`. When neither is present → `nil`.
+- If no note is marked `kind: "summary"`, the gem falls back to the first note (so a lone unkinded note
+  still surfaces).
 
 ### 2.1 Continuing a conversation
 
@@ -179,10 +215,31 @@ Response `202`: `{ "analysis_id": "uuid", "session_id": "uuid", "status": "queue
 `session_id` on the first turn and **echoes** the same one on follow-ups; the gem surfaces it as
 `analysis.session_id`.
 
-**Analysis result** (rootcause → gem), `POST {result_mount_at}` — signed; body is the `Result` JSON
-above plus `analysis_id`, `session_id`, `nonce`, `issued_at`. The gem verifies signature + replay, then
-dispatches to `result_handler` (which sees `result.session_id`). Returns a signed `200 { "ok": true }`
-ack.
+**Analysis result** (rootcause → gem), `POST {result_mount_at}` — signed; the body carries the raw
+`CallbackPayload` (the wire shape, *before* the gem flattens it to the `Result` accessors in §2.1/§2.2)
+plus `analysis_id`, `session_id`, `nonce`, `issued_at`:
+
+```jsonc
+{
+  "analysis_id": "uuid",
+  "session_id":  "uuid",
+  "metadata":    { "resource_type": "SupportTicket", "resource_id": 42 },
+  "draft":       { "body_markdown": "…", "body_html": "…" },        // → result.draft (markdown)
+  "notes": [
+    { "kind": "summary", "body_markdown": "… [run trace](https://…)" }, // → result.note (markdown)
+    { "kind": "widget",  "body_markdown": "…" }                     // not surfaced
+  ],
+  "actions":     [ { "id": "…", "label": "…", "url": "…" } ],
+  "reasoning_steps": [ "…" ],
+  "attachments": [ { "filename": "…", "mime_type": "…", "content_base64": "…" } ],
+  "decline":     null,
+  "nonce":       "uuid",
+  "issued_at":   "2026-06-04T10:05:00Z"
+}
+```
+
+The gem verifies signature + replay, then dispatches to `result_handler` (which sees `result.session_id`,
+`result.draft`/`result.note` as markdown). Returns a signed `200 { "ok": true }` ack.
 
 ## 4. Human-in-the-loop is preserved via `actions[]`
 
@@ -210,8 +267,9 @@ So one result can both fill a draft *and* surface approve-buttons, cleanly separ
 
 ## 6. Attachments (v1 constraints)
 
-- **Body is plain text only.** No markdown/HTML split on the trigger (the result keeps rootcause's
-  `body_markdown`/`body_html` fields for output).
+- **Body is plain text only.** No markdown/HTML split on the trigger. Output is **markdown**: the gem
+  surfaces `draft`/`note` from `body_markdown`, falling back to `body_html` only when markdown is absent
+  (§2.2).
 - **Inline base64 only, capped** at `max_attachment_bytes` per attachment (default 256 KiB decoded).
   Over-cap → `start_analysis` raises before sending. Large files / fetch-URLs are **out of scope** (SPEC
   §11) — same posture as ReplyPen.
@@ -247,7 +305,7 @@ duplicated.
 | **Trigger** | builds the documented body; signs correctly; parses `analysis_id`; non-2xx → `TriggerError`; over-cap attachment → raises pre-send. |
 | **Result route** | sign round-trip; forged/missing signature rejected; stale/duplicate nonce rejected; dispatches to handler; returns signed ack. |
 | **Idempotency** | a redelivered result (fresh nonce) dispatches again → example handler upserts, not duplicates. |
-| **Result object** | maps `CallbackPayload` JSON → symbol-keyed accessors; `decline` → `ok? == false`; absent optional fields → nil. |
+| **Result object** | maps `CallbackPayload` JSON → symbol-keyed accessors; `draft`/`note` surface as **markdown** (`body_markdown`, HTML fallback); `note` selects the `kind: "summary"` note, never widget notes; `decline` → `ok? == false`; absent optional fields → nil. |
 | **Session continuation** | `session_id` present → forwarded in the trigger body; absent/blank → omitted; result exposes `session_id`; full round-trip (trigger → `result.session_id` → follow-up trigger carries it). |
 | **Handler config** | string-named handler lazy-loads; missing handler → fail closed, structured error. |
 

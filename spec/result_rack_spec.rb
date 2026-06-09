@@ -42,7 +42,8 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
 
     delivered = SpecResultHandler.store.fetch("run-1")
     expect(delivered.metadata).to eq({resource_type: "SupportTicket", resource_id: 42})
-    expect(delivered.draft[:body_markdown]).to eq("Hi there")
+    expect(delivered.draft).to eq("Hi there")
+    expect(delivered.note).to eq("Summary. [run trace](https://rc/runs/1)")
   end
 
   it "rejects a forged signature with a signed 401 (and never dispatches)" do

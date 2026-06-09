@@ -93,18 +93,28 @@ end
 mount RootCause::ActionRunner::ResultRackApp.new => RootCause::ActionRunner.config.result_mount_at
 ```
 
-**Trigger** from anywhere in your code:
+**Trigger** from a background job (the trigger is a quick signed POST; running it off the request keeps
+your controller fast and lets you retry on `TriggerError`):
 
 ```ruby
-analysis = RootCause::ActionRunner.start_analysis(
-  subject: ticket.subject,
-  body:    ticket.body,                       # plain text only (v1)
-  attachments: [{filename: "error.log", mime_type: "text/plain",
-                 content_base64: Base64.strict_encode64(ticket.log_file)}],
-  metadata: {resource_type: "SupportTicket", resource_id: ticket.id}, # echoed back verbatim
-)
-analysis.analysis_id   # persist alongside the resource
-analysis.session_id    # persist too — pass it back to continue this conversation
+# app/jobs/analyze_ticket_job.rb
+class AnalyzeTicketJob < ApplicationJob
+  def perform(ticket)
+    analysis = RootCause::ActionRunner.start_analysis(
+      subject: ticket.subject,
+      body:    ticket.body,                       # plain text only (v1)
+      attachments: [{filename: "error.log", mime_type: "text/plain",
+                     content_base64: Base64.strict_encode64(ticket.log_file)}],
+      metadata: {resource_type: "SupportTicket", resource_id: ticket.id}, # echoed back verbatim
+      session_id: ticket.rc_session_id,           # nil on the first turn; set to continue
+    )
+    ticket.update!(
+      rc_analysis_id: analysis.analysis_id,       # persist alongside the resource
+      rc_session_id:  analysis.session_id,        # persist too — forward to continue the thread
+      analysis_state: :pending,
+    )
+  end
+end
 ```
 
 A non-2xx / transport failure raises `RootCause::ActionRunner::TriggerError` (yours to retry); an
@@ -123,7 +133,8 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
       ticket.update!(analysis_state: :declined, analysis_note: result.decline[:reason])
     else
       ticket.update!(analysis_state: :ready,
-        ai_draft:        result.draft&.dig(:body_markdown),
+        ai_draft:        result.draft, # markdown string (the drafted answer)
+        ai_note:         result.note,  # markdown string (the summary note)
         rc_session_id:   result.session_id, # persist to continue the thread later
         rc_actions:      result.actions) # human-gated buttons — render, never auto-execute
     end
@@ -131,9 +142,13 @@ class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
 end
 ```
 
-`draft` / `note` / `reasoning_steps` / `attachments` are informational (safe to auto-burn);
-**`actions[]`** are vetted side-effects rootcause *proposes* — render them for a human to click, and
-they ride back through the **invocation route**. The gem never auto-runs them.
+`result.draft` and `result.note` are **markdown strings** — `draft` is the drafted answer's
+`body_markdown`; `note` is the *summary* note's `body_markdown` (rootcause delivers `notes[]` — one
+summary note plus widget notes; the gem surfaces only the summary, whose body carries the run-trace as
+a markdown link). HTML is used only as a fallback when markdown is absent. `draft` / `note` /
+`reasoning_steps` / `attachments` are informational (safe to auto-burn); **`actions[]`** are vetted
+side-effects rootcause *proposes* — render them for a human to click, and they ride back through the
+**invocation route**. The gem never auto-runs them.
 
 **Continue the conversation** — the host keeps the history keyed by `session_id`, so a follow-up sends
 **only the new message** (never prior turns):

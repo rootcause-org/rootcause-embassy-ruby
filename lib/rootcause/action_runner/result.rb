@@ -14,12 +14,23 @@ module RootCause
     # ride back through the gem's existing invocation route. The gem never auto-runs
     # them, so no "autonomous action" feature is needed.
     #
+    # `draft` and `note` are surfaced as **markdown strings**, not the raw nested
+    # nodes: `draft` is the drafted answer's `body_markdown`; `note` is the SUMMARY
+    # note's `body_markdown` (rootcause delivers `notes[]` — one summary note plus
+    # zero or more widget notes; we surface only the summary, whose body carries the
+    # run-trace as a markdown link). HTML is a fallback only when markdown is absent
+    # (the host is migrating notes from `body_html` to `body_markdown`).
+    #
     # `session_id` is the host-managed conversation key — opaque to the gem. Persist
     # it on the record and pass it back to start_analysis to continue the thread; a
     # follow-up then sends only the new message (the host keeps prior history).
     class Result
       attr_reader :analysis_id, :session_id, :metadata, :draft, :note, :actions,
         :reasoning_steps, :attachments, :decline
+
+      # The note kind that carries the human-facing summary. Other kinds (widgets)
+      # are rendered separately by rootcause and never surfaced here.
+      SUMMARY_KIND = "summary"
 
       def initialize(analysis_id:, session_id:, metadata:, draft:, note:, actions:, reasoning_steps:, attachments:, decline:)
         @analysis_id = analysis_id
@@ -48,8 +59,8 @@ module RootCause
           analysis_id: data[:analysis_id],
           session_id: data[:session_id],
           metadata: data[:metadata] || EMPTY_HASH,
-          draft: data[:draft],
-          note: data[:note],
+          draft: markdown_of(data[:draft]),
+          note: markdown_of(summary_note(data[:notes])),
           actions: data[:actions] || EMPTY_ARRAY,
           reasoning_steps: data[:reasoning_steps] || EMPTY_ARRAY,
           attachments: data[:attachments] || EMPTY_ARRAY,
@@ -59,6 +70,28 @@ module RootCause
 
       EMPTY_HASH = {}.freeze
       EMPTY_ARRAY = [].freeze
+
+      # The markdown body of a content node ({ body_markdown:, body_html: }), as a
+      # string. Prefers `body_markdown`; falls back to `body_html` only when markdown
+      # is absent (host migration). nil node or no body → nil.
+      def self.markdown_of(node)
+        return nil unless node.is_a?(Hash)
+
+        value = node[:body_markdown]
+        value = node[:body_html] if blank?(value)
+        blank?(value) ? nil : value
+      end
+
+      # Pick the single summary note out of `notes[]`. Match by SUMMARY_KIND; if the
+      # host marks none (e.g. a lone unkinded note), fall back to the first so a
+      # single-note payload still surfaces. Widget notes are never concatenated.
+      def self.summary_note(notes)
+        return nil unless notes.is_a?(Array) && !notes.empty?
+
+        notes.find { |n| n.is_a?(Hash) && n[:kind].to_s == SUMMARY_KIND } || notes.first
+      end
+
+      def self.blank?(value) = value.nil? || value.to_s == ""
 
       # Deep symbol-keying + freeze. Symbol keys match the documented accessors
       # (e.g. result.metadata[:resource_id]); freezing keeps the bag immutable so a

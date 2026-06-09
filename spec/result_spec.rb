@@ -1,12 +1,15 @@
 # frozen_string_literal: true
 
 RSpec.describe RootCause::ActionRunner::Result do
-  it "maps CallbackPayload JSON to symbol-keyed, frozen accessors" do
+  it "maps CallbackPayload JSON to symbol-keyed, frozen accessors with markdown draft/note" do
     result = described_class.from_payload(
       "analysis_id" => "run-1",
       "metadata" => {"resource_type" => "SupportTicket", "resource_id" => 42},
       "draft" => {"body_markdown" => "**hi**", "body_html" => "<b>hi</b>"},
-      "note" => {"body_markdown" => "n", "body_html" => "<p>n</p>", "body_text" => "n"},
+      "notes" => [
+        {"kind" => "summary", "body_markdown" => "the summary [trace](https://x)", "body_html" => "<p>s</p>"},
+        {"kind" => "widget", "body_markdown" => "a widget", "body_html" => "<p>w</p>"}
+      ],
       "actions" => [{"id" => "a1", "label" => "Approve", "description" => "d", "url" => "https://x", "color" => "green"}],
       "reasoning_steps" => ["looked", "concluded"],
       "attachments" => [{"filename" => "f.txt", "mime_type" => "text/plain", "content_base64" => "eA=="}]
@@ -14,13 +17,60 @@ RSpec.describe RootCause::ActionRunner::Result do
 
     expect(result.analysis_id).to eq("run-1")
     expect(result.metadata).to eq({resource_type: "SupportTicket", resource_id: 42})
-    expect(result.draft).to eq({body_markdown: "**hi**", body_html: "<b>hi</b>"})
-    expect(result.note[:body_text]).to eq("n")
+    expect(result.draft).to eq("**hi**")
+    expect(result.note).to eq("the summary [trace](https://x)")
     expect(result.actions.first[:label]).to eq("Approve")
     expect(result.reasoning_steps).to eq(["looked", "concluded"])
     expect(result.attachments.first[:filename]).to eq("f.txt")
     expect(result).to be_frozen
     expect(result.metadata).to be_frozen
+  end
+
+  describe "draft (markdown)" do
+    it "surfaces the draft's body_markdown as a string" do
+      result = described_class.from_payload("draft" => {"body_markdown" => "# Draft", "body_html" => "<h1>Draft</h1>"})
+      expect(result.draft).to eq("# Draft")
+    end
+
+    it "falls back to body_html only when markdown is absent" do
+      result = described_class.from_payload("draft" => {"body_html" => "<p>only html</p>"})
+      expect(result.draft).to eq("<p>only html</p>")
+    end
+
+    it "is nil when the draft node is absent or empty" do
+      expect(described_class.from_payload({}).draft).to be_nil
+      expect(described_class.from_payload("draft" => {"body_markdown" => ""}).draft).to be_nil
+    end
+  end
+
+  describe "note (summary note, markdown)" do
+    it "selects the summary note's body_markdown and ignores widget notes" do
+      result = described_class.from_payload(
+        "notes" => [
+          {"kind" => "widget", "body_markdown" => "widget one"},
+          {"kind" => "summary", "body_markdown" => "the summary"},
+          {"kind" => "widget", "body_markdown" => "widget two"}
+        ]
+      )
+      expect(result.note).to eq("the summary")
+    end
+
+    it "falls back to body_html for the summary note when markdown is absent" do
+      result = described_class.from_payload(
+        "notes" => [{"kind" => "summary", "body_html" => "<p>summary html</p>"}]
+      )
+      expect(result.note).to eq("<p>summary html</p>")
+    end
+
+    it "falls back to the first note when none is marked summary" do
+      result = described_class.from_payload("notes" => [{"body_markdown" => "lone note"}])
+      expect(result.note).to eq("lone note")
+    end
+
+    it "is nil when notes is absent or empty" do
+      expect(described_class.from_payload({}).note).to be_nil
+      expect(described_class.from_payload("notes" => []).note).to be_nil
+    end
   end
 
   it "exposes the session_id from the result envelope" do
