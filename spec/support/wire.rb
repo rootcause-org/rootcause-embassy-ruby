@@ -8,6 +8,7 @@ module Wire
   SECRET = "test-reverse-channel-secret"
   FETCH_URL = "https://rootcause.test/actions/script"
   TRIGGER_URL = "https://rootcause.test/analyses/test-project"
+  SENT_MESSAGE_URL = "https://rootcause.test/analyses/test-project/sent-message"
 
   module_function
 
@@ -55,6 +56,7 @@ module Wire
     cfg.secret = SECRET
     cfg.fetch_url = FETCH_URL
     cfg.trigger_url = TRIGGER_URL
+    cfg.sent_message_url = SENT_MESSAGE_URL
     cfg.logger = nil
     cfg.cache_dir = nil # memory-only in tests; no tmp pollution
     overrides.each { |k, v| cfg.public_send("#{k}=", v) }
@@ -69,6 +71,15 @@ module Wire
     WebMock.stub_request(:post, TRIGGER_URL).to_return(
       status: status,
       body: JSON.generate("analysis_id" => analysis_id, "session_id" => session_id, "status" => "queued"),
+      headers: {"content-type" => "application/json"}
+    )
+  end
+
+  # Stub the host's sent-message route, returning a 2xx with the persisted row id.
+  def stub_sent_message(id: "sent-msg-1", status: 200)
+    WebMock.stub_request(:post, SENT_MESSAGE_URL).to_return(
+      status: status,
+      body: JSON.generate("sent_message_id" => id),
       headers: {"content-type" => "application/json"}
     )
   end

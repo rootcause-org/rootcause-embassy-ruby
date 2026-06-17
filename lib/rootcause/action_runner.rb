@@ -63,6 +63,13 @@ module RootCause
         client.start_analysis(...)
       end
 
+      # Fire-and-forget: hand rootcause the reply a human agent actually sent (after
+      # editing the proposed draft), keyed to the analysis `session_id`. See
+      # Client#capture_sent_message.
+      def capture_sent_message(...)
+        client.capture_sent_message(...)
+      end
+
       # Test/boot-order seam: drop the configured singletons.
       def reset!
         @config = nil

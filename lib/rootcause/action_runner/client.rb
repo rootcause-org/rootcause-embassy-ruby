@@ -23,6 +23,10 @@ module RootCause
       # forward on the next turn, never interpret), and the host's queue status.
       Analysis = Struct.new(:analysis_id, :session_id, :status, keyword_init: true)
 
+      # What capture_sent_message returns: `ok` is always true on a 2xx; `id` is
+      # the host's sent_messages row id when it echoes one (nil if it doesn't).
+      SentMessage = Struct.new(:id, :ok, keyword_init: true)
+
       def initialize(config)
         @config = config
       end
@@ -51,9 +55,51 @@ module RootCause
         payload["session_id"] = session_id unless blank?(session_id)
         raw = JSON.generate(payload)
 
-        analysis = parse(post(url, raw))
+        response = post(url, raw, transport_error: TriggerError, label: "analysis trigger")
+        analysis = parse(response)
         log(analysis, metadata, payload["attachments"].size)
         analysis
+      end
+
+      # Fire-and-forget: hand rootcause the actual reply a human agent sent (after
+      # editing the proposed draft), keyed to the same `session_id` as the analysis
+      # so the host can learn the proposed-vs-sent delta. Pure outbound POST — no
+      # analysis, no result handler. The host re-verifies on the RAW bytes, so the
+      # payload key order here is irrelevant; only the signed bytes matter.
+      #
+      # @param sent_body [String] the reply that actually left the building (required)
+      # @param session_id [String] the same handle passed to start_analysis (required)
+      # @param proposed_body [String, nil] what rootcause proposed; omit if unknown
+      # @param sender [String, nil] who sent it (agent label/name)
+      # @param metadata [Hash] correlation (keys logged, values never)
+      # @return [SentMessage] frozen, `ok: true` (with the host's id when echoed)
+      # @raise [SentMessageError] non-2xx, malformed response, or transport failure
+      # @raise [ArgumentError] missing sent_message_url, or blank sent_body/session_id
+      def capture_sent_message(sent_body:, session_id:, proposed_body: nil, sender: nil, metadata: {})
+        url = @config.sent_message_url
+        raise ArgumentError, "RootCause::ActionRunner: sent_message_url is not configured" if blank?(url)
+        raise ArgumentError, "RootCause::ActionRunner: sent_body is required" if blank?(sent_body)
+        raise ArgumentError, "RootCause::ActionRunner: session_id is required" if blank?(session_id)
+
+        metadata ||= {}
+        sent = {"body" => sent_body}
+        sent["sender"] = sender unless blank?(sender)
+        payload = {
+          "type" => "sent_message",
+          "session_id" => session_id,
+          "sent" => sent
+        }
+        # Absent `proposed` tells the host to treat the reply as pure signal.
+        payload["proposed"] = {"body" => proposed_body} unless blank?(proposed_body)
+        payload["metadata"] = metadata
+        payload["nonce"] = SecureRandom.uuid
+        payload["issued_at"] = Time.now.utc.iso8601
+        raw = JSON.generate(payload)
+
+        response = post(url, raw, transport_error: SentMessageError, label: "sent-message capture")
+        result = parse_sent_message(response)
+        log_sent_message(session_id, metadata, sent_body, proposed_body)
+        result
       end
 
       private
@@ -95,7 +141,10 @@ module RootCause
         raise ArgumentError, "attachment #{i}: content_base64 is not valid (strict) base64"
       end
 
-      def post(url, raw)
+      # Sign the RAW body and POST it. Transport-layer failures (Net::HTTP / SSL /
+      # Timeout / URI) collapse to `transport_error` so each caller surfaces its own
+      # exception type for the caller to rescue and decide to retry.
+      def post(url, raw, transport_error:, label:)
         uri = URI(url)
         request = Net::HTTP::Post.new(uri)
         request["content-type"] = "application/json"
@@ -104,9 +153,7 @@ module RootCause
 
         Http.perform(uri, request, open_timeout: @config.http_open_timeout, read_timeout: @config.http_read_timeout)
       rescue => e
-        # Net::HTTP / SSL / Timeout / URI failures collapse to a TriggerError the
-        # caller can rescue and decide to retry.
-        raise TriggerError, "analysis trigger failed: #{e.class}: #{e.message}"
+        raise transport_error, "#{label} failed: #{e.class}: #{e.message}"
       end
 
       def parse(response)
@@ -126,6 +173,36 @@ module RootCause
         ).freeze
       rescue JSON::ParserError
         raise TriggerError, "analysis trigger response was not valid JSON"
+      end
+
+      # A 2xx is success; the body is optional. When the host echoes a row id
+      # (`sent_message_id` or `id`), carry it back for the caller's correlation.
+      def parse_sent_message(response)
+        unless response.is_a?(Net::HTTPSuccess)
+          raise SentMessageError, "sent-message capture returned #{response.code}"
+        end
+
+        body = response.body.to_s
+        id = nil
+        unless body.empty?
+          data = JSON.parse(body)
+          id = data["sent_message_id"] || data["id"] if data.is_a?(Hash)
+        end
+        SentMessage.new(id: id, ok: true).freeze
+      rescue JSON::ParserError
+        raise SentMessageError, "sent-message capture response was not valid JSON"
+      end
+
+      # Customer-side audit: session_id, metadata KEYS only (never values), and the
+      # body BYTE sizes — never the bodies themselves or the secret.
+      def log_sent_message(session_id, metadata, sent_body, proposed_body)
+        return unless @config.logger
+
+        @config.logger.info(
+          "[rootcause-sent-message] session_id=#{session_id} " \
+          "metadata_keys=#{metadata_keys(metadata)} " \
+          "sent_bytes=#{sent_body.to_s.bytesize} proposed_bytes=#{proposed_body.to_s.bytesize}"
+        )
       end
 
       # Customer-side audit: the run id, metadata KEYS only (never values — they

@@ -174,4 +174,124 @@ RSpec.describe RootCause::ActionRunner::Client do
       end
     end
   end
+
+  # Fire-and-forget capture of the reply a human agent actually sent. Same build →
+  # sign → POST shape as start_analysis, on the same reverse secret.
+  describe "#capture_sent_message" do
+    it "builds the documented body, signs the raw JSON, and returns the result struct" do
+      Wire.stub_sent_message(id: "sm-7")
+
+      result = client.capture_sent_message(
+        sent_body: "Thanks, your reset link is on the way.",
+        session_id: "support_ticket-abc",
+        proposed_body: "Here is your reset link.",
+        sender: "Astrid",
+        metadata: {resource_type: "SupportTicket", resource_id: 42}
+      )
+
+      expect(result.ok).to be(true)
+      expect(result.id).to eq("sm-7")
+      expect(result).to be_frozen
+
+      expect(
+        a_request(:post, Wire::SENT_MESSAGE_URL).with { |req|
+          body = JSON.parse(req.body)
+          sig_ok = RootCause::ActionRunner::Signature.valid?(
+            req.headers["X-Webhook-Signature"], req.body, secret: Wire::SECRET
+          )
+          sig_ok &&
+            body["type"] == "sent_message" &&
+            body["session_id"] == "support_ticket-abc" &&
+            body["sent"] == {"body" => "Thanks, your reset link is on the way.", "sender" => "Astrid"} &&
+            body["proposed"] == {"body" => "Here is your reset link."} &&
+            body["metadata"] == {"resource_type" => "SupportTicket", "resource_id" => 42} &&
+            body["nonce"].is_a?(String) && !body["nonce"].empty? &&
+            body["issued_at"].is_a?(String)
+        }
+      ).to have_been_made
+    end
+
+    it "omits proposed and sender when not given" do
+      Wire.stub_sent_message
+
+      client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
+
+      expect(
+        a_request(:post, Wire::SENT_MESSAGE_URL).with { |req|
+          body = JSON.parse(req.body)
+          !body.key?("proposed") && body["sent"] == {"body" => "reply"}
+        }
+      ).to have_been_made
+    end
+
+    it "returns ok with a nil id when the host echoes no body" do
+      WebMock.stub_request(:post, Wire::SENT_MESSAGE_URL).to_return(status: 204, body: "")
+      result = client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
+      expect(result.ok).to be(true)
+      expect(result.id).to be_nil
+    end
+
+    it "raises ArgumentError BEFORE any HTTP when sent_message_url is unconfigured" do
+      config.sent_message_url = nil
+      stub = Wire.stub_sent_message
+      expect {
+        client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
+      }.to raise_error(ArgumentError, /sent_message_url is not configured/)
+      expect(stub).not_to have_been_requested
+    end
+
+    it "raises ArgumentError on a blank sent_body, before sending" do
+      stub = Wire.stub_sent_message
+      expect {
+        client.capture_sent_message(sent_body: "", session_id: "sess-1")
+      }.to raise_error(ArgumentError, /sent_body is required/)
+      expect(stub).not_to have_been_requested
+    end
+
+    it "raises ArgumentError on a blank session_id, before sending" do
+      stub = Wire.stub_sent_message
+      expect {
+        client.capture_sent_message(sent_body: "reply", session_id: "")
+      }.to raise_error(ArgumentError, /session_id is required/)
+      expect(stub).not_to have_been_requested
+    end
+
+    it "raises SentMessageError on a non-2xx response" do
+      Wire.stub_sent_message(status: 500)
+      expect {
+        client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
+      }.to raise_error(RootCause::ActionRunner::SentMessageError, /500/)
+    end
+
+    it "raises SentMessageError on a transport failure" do
+      WebMock.stub_request(:post, Wire::SENT_MESSAGE_URL).to_timeout
+      expect {
+        client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
+      }.to raise_error(RootCause::ActionRunner::SentMessageError, /capture failed/)
+    end
+
+    describe "logging" do
+      let(:logger) { instance_double(Logger, info: nil) }
+      let(:config) { Wire.config(logger: logger) }
+
+      it "logs session_id, metadata KEYS, and byte sizes — never bodies or values" do
+        Wire.stub_sent_message
+        client.capture_sent_message(
+          sent_body: "secret reply text",
+          session_id: "sess-1",
+          proposed_body: "proposed text",
+          metadata: {resource_type: "SupportTicket", resource_id: 42}
+        )
+        expect(logger).to have_received(:info) do |line|
+          expect(line).to include("session_id=sess-1")
+          expect(line).to include("metadata_keys=[\"resource_id\", \"resource_type\"]")
+          expect(line).to include("sent_bytes=17")
+          expect(line).to include("proposed_bytes=13")
+          expect(line).not_to include("secret reply text")
+          expect(line).not_to include("SupportTicket")
+          expect(line).not_to include("42")
+        end
+      end
+    end
+  end
 end

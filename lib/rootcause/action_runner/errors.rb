@@ -59,5 +59,13 @@ module RootCause
     # — the caller decides whether to retry. (A bad/over-cap attachment raises
     # ArgumentError before anything is sent — it is not retryable.)
     class TriggerError < StandardError; end
+
+    # Raised to the CALLER of `capture_sent_message`, never turned into a signed
+    # reply: the sent-message capture got a non-2xx, a malformed response, or a
+    # transport failure. Fire-and-forget transport, but the call is the customer's
+    # — we surface it rather than swallow it, and the caller decides retry/skip.
+    # (A blank sent_body/session_id or missing sent_message_url raises ArgumentError
+    # before anything is sent — not retryable.)
+    class SentMessageError < StandardError; end
   end
 end

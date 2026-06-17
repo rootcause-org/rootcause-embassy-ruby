@@ -51,6 +51,11 @@ module RootCause
       # "https://<rootcause>/analyses/<project>". Required only to trigger.
       attr_accessor :trigger_url
 
+      # Where capture_sent_message POSTs the signed sent-message capture, e.g.
+      # "https://<rootcause>/analyses/<project>/sent-message". Reuses `secret`
+      # (no new crypto). Required only to capture; not part of validate!.
+      attr_accessor :sent_message_url
+
       # Route that receives async results. Mounted like mount_at; firewall it to
       # rootcause's egress IP, same recommendation as the invocation route.
       attr_accessor :result_mount_at
