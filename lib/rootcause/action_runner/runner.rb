@@ -80,7 +80,11 @@ module RootCause
         )
 
         params = Schema.validate!(invocation["params"], invocation["schema"])
-        script = @resolver.resolve(action_id: invocation["action_id"], digest: invocation["script_digest"])
+        script = @resolver.resolve(
+          action_id: invocation["action_id"],
+          digest: invocation["script_digest"],
+          project_id: invocation["project_id"]
+        )
 
         @executor.run(script: script, params: params, digest: invocation["script_digest"])
       end

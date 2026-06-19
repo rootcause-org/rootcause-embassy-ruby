@@ -27,13 +27,13 @@ module RootCause
 
       # @return [String] the digest-verified script body
       # @raise [ResolveError] on any failure to produce a verified body
-      def resolve(action_id:, digest:)
+      def resolve(action_id:, digest:, project_id:)
         hex = self.class.hex(digest)
 
         cached = read_cache(hex)
         return cached if cached
 
-        body = fetch(action_id: action_id, digest: digest)
+        body = fetch(action_id: action_id, digest: digest, project_id: project_id)
         verify_digest!(body, hex)
         write_cache(hex, body)
         body
@@ -104,8 +104,12 @@ module RootCause
         raise ResolveError, "digest mismatch: fetched body hashes to #{actual}, expected #{hex}"
       end
 
-      def fetch(action_id:, digest:)
-        query = URI.encode_www_form([["action_id", action_id], ["digest", digest]])
+      def fetch(action_id:, digest:, project_id:)
+        # The host's script-fetch keys the project off `project_id` (to pick the registry + the secret
+        # it verifies this request's signature with) and verifies over the WHOLE query string — so it
+        # must ride the query AND the signed bytes, not just be known to us. Order matches the host's
+        # raw-query verification: action_id, digest, project_id.
+        query = URI.encode_www_form([["action_id", action_id], ["digest", digest], ["project_id", project_id]])
         uri = URI(@config.fetch_url)
         uri.query = query
 
