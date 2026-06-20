@@ -72,6 +72,8 @@ module RootCause
       end
 
       def run(invocation)
+        started = clock_ms
+
         Replay.guard!(
           issued_at: invocation["issued_at"],
           nonce: invocation["nonce"],
@@ -80,14 +82,34 @@ module RootCause
         )
 
         params = Schema.validate!(invocation["params"], invocation["schema"])
+        # Resolve runs in dry_run too: it exercises the digest-verified signed
+        # fetch, so a dry run surfaces fetch/digest contract problems. Only the
+        # executor is skipped.
         script = @resolver.resolve(
           action_id: invocation["action_id"],
           digest: invocation["script_digest"],
           project_id: invocation["project_id"]
         )
 
+        # WIRE CONTRACT v1 §5 (see WIRE-CONTRACT.md in rootcause-light): dry_run
+        # runs the full verify→replay→schema→resolve pipeline but SKIPS execution,
+        # returning a signed ok:true Result that proves the contract holds with
+        # zero side effects. Truthiness, not just `== true`, so any truthy host
+        # value (e.g. the JSON boolean) counts.
+        if invocation["dry_run"]
+          return Executor::Result.new(
+            ok: true,
+            return_value: {"dry_run" => true, "would_execute" => true},
+            error: nil,
+            stdout: "",
+            duration_ms: (clock_ms - started).round
+          )
+        end
+
         @executor.run(script: script, params: params, digest: invocation["script_digest"])
       end
+
+      def clock_ms = Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_millisecond)
 
       def envelope(result)
         {

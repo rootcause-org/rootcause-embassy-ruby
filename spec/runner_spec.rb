@@ -117,6 +117,49 @@ RSpec.describe RootCause::ActionRunner::Runner do
     expect(body_of(reply)["ok"]).to be(false)
   end
 
+  describe "dry_run (validate-only)" do
+    it "runs verify→replay→schema→resolve but never executes, returning a signed would_execute result" do
+      script = "raise 'must not run'" # proves the executor is skipped
+      stub = Wire.stub_fetch(script: script)
+      executor = instance_double(RootCause::ActionRunner::Executor)
+      allow(executor).to receive(:run)
+      runner = described_class.new(config, executor: executor)
+
+      raw = JSON.generate(Wire.invocation(script: script, dry_run: true))
+      reply = runner.handle(raw_body: raw, signature: Wire.sign(raw))
+
+      expect(reply.status).to eq(200)
+      payload = body_of(reply)
+      expect(payload["ok"]).to be(true)
+      expect(payload["return_value"]).to eq({"dry_run" => true, "would_execute" => true})
+      expect(payload["stdout"]).to eq("")
+      expect(payload["error"]).to be_nil
+      expect(payload["duration_ms"]).to be_a(Integer)
+      # The signed fetch (digest-verified resolve) WAS exercised; the executor was NOT.
+      expect(stub).to have_been_requested
+      expect(executor).not_to have_received(:run)
+      expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    end
+
+    it "still returns the resolve_failed refusal when resolve fails under dry_run (no side-effect-free pass)" do
+      real = "{ ok: true }"
+      inv = Wire.invocation(script: real, dry_run: true)
+      # Host serves a different body under the requested digest → digest mismatch.
+      Wire.stub_fetch(script: "{ evil: true }", digest: inv["script_digest"])
+      reply = handle(inv)
+      expect(reply.status).to eq(502)
+      expect(body_of(reply).dig("error", "class")).to eq("resolve_failed")
+    end
+
+    it "executes normally when dry_run is absent or false" do
+      script = "{ ran: true }"
+      Wire.stub_fetch(script: script)
+      reply = handle(Wire.invocation(script: script, dry_run: false))
+      expect(reply.status).to eq(200)
+      expect(body_of(reply)["return_value"]).to eq({"ran" => true})
+    end
+  end
+
   describe "logging" do
     let(:logger) { instance_double(Logger, info: nil, warn: nil) }
     let(:config) { Wire.config(logger: logger) }
