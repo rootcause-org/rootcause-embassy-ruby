@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "logger"
+require "uri"
 
 module RootCause
   module ActionRunner
@@ -69,6 +70,11 @@ module RootCause
       # sending anything larger. Large files / fetch-URLs are out of scope (v1).
       attr_accessor :max_attachment_bytes
 
+      # The placeholder fetch_url shipped as the default when ROOTCAUSE_FETCH_URL
+      # is unset. Reaching resolve with this URL fails opaquely; the boot guard
+      # catches it eagerly when the reverse channel is active.
+      PLACEHOLDER_FETCH_URL = "https://rootcause.invalid/actions/script"
+
       def initialize
         @mount_at = "/rootcause/action"
         @timeout = 20
@@ -89,11 +95,32 @@ module RootCause
       def validate!
         raise ArgumentError, "RootCause::ActionRunner: secret is required" if blank?(secret)
         raise ArgumentError, "RootCause::ActionRunner: fetch_url is required" if blank?(fetch_url)
+        # When the reverse channel is active (secret present), the placeholder
+        # fetch_url is a deployment mistake (ROOTCAUSE_FETCH_URL unset) that would
+        # otherwise fail opaquely at the first resolve. Name the fix at boot. An
+        # inert app (no secret) never fetches a script, so the placeholder is fine.
+        if !blank?(secret) && placeholder_fetch_url?
+          raise ArgumentError,
+            "RootCause::ActionRunner: fetch_url is the placeholder " \
+            "(#{fetch_url}) — set ROOTCAUSE_FETCH_URL to the host's /actions/script endpoint"
+        end
         raise ArgumentError, "RootCause::ActionRunner: timeout must be positive" unless timeout.to_f > 0
         self
       end
 
       private
+
+      # The placeholder, by exact match OR by a host ending in `.invalid` (the
+      # reserved TLD the placeholder uses). A malformed fetch_url can't slip past
+      # the boot guard: an unparseable URI counts as a placeholder so it's caught.
+      def placeholder_fetch_url?
+        return true if fetch_url.to_s == PLACEHOLDER_FETCH_URL
+
+        host = URI(fetch_url.to_s).host
+        host.nil? || host.downcase.end_with?(".invalid")
+      rescue URI::InvalidURIError
+        true
+      end
 
       def blank?(value) = value.nil? || value.to_s.empty?
     end

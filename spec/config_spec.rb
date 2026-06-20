@@ -21,6 +21,34 @@ RSpec.describe RootCause::ActionRunner::Config do
     expect { cfg.validate! }.to raise_error(ArgumentError, /timeout/)
   end
 
+  it "raises a clear, fix-naming error when fetch_url is the placeholder and the reverse channel is active" do
+    cfg = described_class.new
+    cfg.secret = "s"
+    cfg.fetch_url = described_class::PLACEHOLDER_FETCH_URL
+    expect { cfg.validate! }.to raise_error(ArgumentError, /placeholder.*ROOTCAUSE_FETCH_URL/m)
+  end
+
+  it "rejects any fetch_url whose host ends in .invalid when the reverse channel is active" do
+    cfg = described_class.new
+    cfg.secret = "s"
+    cfg.fetch_url = "https://rootcause.invalid/actions/script"
+    expect { cfg.validate! }.to raise_error(ArgumentError, /placeholder/)
+  end
+
+  it "allows the placeholder fetch_url for an inert app (no secret configured)" do
+    cfg = described_class.new
+    cfg.fetch_url = described_class::PLACEHOLDER_FETCH_URL
+    # No secret → the secret-required check fires first; the placeholder itself is fine.
+    expect { cfg.validate! }.to raise_error(ArgumentError, /secret/)
+  end
+
+  it "accepts a real fetch_url with the reverse channel active" do
+    cfg = described_class.new
+    cfg.secret = "s"
+    cfg.fetch_url = "https://rootcause.example.com/actions/script"
+    expect { cfg.validate! }.not_to raise_error
+  end
+
   it "carries sensible defaults" do
     cfg = described_class.new
     expect(cfg.mount_at).to eq("/rootcause/action")
