@@ -3,7 +3,7 @@
 require "json"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # The framework-agnostic core: one raw request body + its signature in, one
     # signed JSON reply out. This is the verify → replay → validate → resolve →
     # run → sign pipeline, fail-closed at every step. The Rack shell is a thin

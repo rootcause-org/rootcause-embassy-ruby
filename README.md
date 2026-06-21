@@ -1,9 +1,15 @@
-# rootcause-action-runner
+# rootcause-embassy
 
-A **thin Ruby gem** the customer mounts once in their Rails app — the first **action runner** in
-rootcause's **action plane**. It receives a signed, digest-pinned **invocation** from the rootcause
-host, **resolves the action's script by digest**, runs it **inline with a hard timeout**, and returns
-a **signed structured result**. No executable code ever travels on the wire.
+> **Renamed:** this gem was `rootcause-action-runner` (namespace `RootCause::ActionRunner`) ≤ 0.2.0.
+> It is now **`rootcause-embassy`** / `RootCause::Embassy` as of 0.3.0.
+
+The **Embassy** is rootcause's trusted, in-app presence inside the customer's own Rails/Rack
+runtime — the far end of the reverse channel. It **executes actions** (receives a signed,
+digest-pinned **invocation** from the rootcause host, **resolves the action's script by digest**,
+runs it **inline with a hard timeout**, returns a **signed structured result**) and **receives
+async-analysis results**, all using the customer's own env, code, and tooling. No executable code
+ever travels on the wire. This Ruby gem is the first manifestation; PHP/Node/.NET Embassies ship as
+their own per-language repos (`rootcause-embassy-<lang>`).
 
 > The authoritative design is [SPEC.md](SPEC.md). The whole-plane design (host side: registry,
 > signer, confirm/execute pages, audit) lives in
@@ -13,14 +19,14 @@ a **signed structured result**. No executable code ever travels on the wire.
 
 ```ruby
 # Gemfile
-gem "rootcause-action-runner"
+gem "rootcause-embassy"
 ```
 
 ## Configure
 
 ```ruby
 # config/initializers/rootcause.rb
-RootCause::ActionRunner.configure do |c|
+RootCause::Embassy.configure do |c|
   c.secret    = ENV.fetch("ROOTCAUSE_ACTION_SECRET") # reverse-channel HMAC secret (per project)
   c.fetch_url = "https://<rootcause>/actions/script" # script-by-digest endpoint
   c.timeout   = 20                                   # hard per-run timeout (seconds)
@@ -40,7 +46,7 @@ Explicit mount — least magic, easiest to restrict at the edge:
 
 ```ruby
 # config/routes.rb
-mount RootCause::ActionRunner::RackApp.new => RootCause::ActionRunner.config.mount_at
+mount RootCause::Embassy::RackApp.new => RootCause::Embassy.config.mount_at
 ```
 
 **Recommended (documented, not enforced in v1):** restrict the route to rootcause's egress IP at the
@@ -79,7 +85,7 @@ follow-up sends only the new message — persist the `session_id` and pass it ba
 
 ```ruby
 # config/initializers/rootcause.rb — extends the block above
-RootCause::ActionRunner.configure do |c|
+RootCause::Embassy.configure do |c|
   # ... secret / fetch_url as above ...
   c.trigger_url     = "https://<rootcause>/analyses/<project>" # where start_analysis POSTs
   c.result_mount_at = "/rootcause/result"                      # route that receives async results
@@ -90,7 +96,7 @@ end
 
 ```ruby
 # config/routes.rb — mount the result route alongside the invocation route
-mount RootCause::ActionRunner::ResultRackApp.new => RootCause::ActionRunner.config.result_mount_at
+mount RootCause::Embassy::ResultRackApp.new => RootCause::Embassy.config.result_mount_at
 ```
 
 **Trigger** from a background job (the trigger is a quick signed POST; running it off the request keeps
@@ -100,7 +106,7 @@ your controller fast and lets you retry on `TriggerError`):
 # app/jobs/analyze_ticket_job.rb
 class AnalyzeTicketJob < ApplicationJob
   def perform(ticket)
-    analysis = RootCause::ActionRunner.start_analysis(
+    analysis = RootCause::Embassy.start_analysis(
       subject: ticket.subject,
       body:    ticket.body,                       # plain text only (v1)
       attachments: [{filename: "error.log", mime_type: "text/plain",
@@ -117,14 +123,14 @@ class AnalyzeTicketJob < ApplicationJob
 end
 ```
 
-A non-2xx / transport failure raises `RootCause::ActionRunner::TriggerError` (yours to retry); an
+A non-2xx / transport failure raises `RootCause::Embassy::TriggerError` (yours to retry); an
 over-cap or malformed attachment raises `ArgumentError` before anything is sent.
 
 **Handle the result** — a plain class in `app/`, idempotent (rootcause **redelivers** on a lost ack):
 
 ```ruby
 # app/rootcause/analysis_result_handler.rb
-class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
+class AnalysisResultHandler < RootCause::Embassy::ResultHandler
   def process(result)
     return unless result.metadata[:resource_type] == "SupportTicket"
     ticket = SupportTicket.find_by(id: result.metadata[:resource_id]) or return
@@ -154,7 +160,7 @@ side-effects rootcause *proposes* — render them for a human to click, and they
 **only the new message** (never prior turns):
 
 ```ruby
-RootCause::ActionRunner.start_analysis(
+RootCause::Embassy.start_analysis(
   subject:    "Still failing after the reset",
   body:       customer_reply,                      # just the new message
   session_id: ticket.rc_session_id,                # the id you persisted above
@@ -172,15 +178,15 @@ workers a replay could slip through on a second worker, so inject a shared store
 to `add?(nonce, ttl:)`, e.g. a `Rails.cache`-backed adapter using `write(unless_exist: true)`):
 
 ```ruby
-runner = RootCause::ActionRunner::Runner.new(RootCause::ActionRunner.config, nonce_store: MyCacheStore.new)
-mount RootCause::ActionRunner::RackApp.new(runner: runner) => "/rootcause/action"
+runner = RootCause::Embassy::Runner.new(RootCause::Embassy.config, nonce_store: MyCacheStore.new)
+mount RootCause::Embassy::RackApp.new(runner: runner) => "/rootcause/action"
 ```
 
 The **result route** has its own nonce store with the same caveat — inject a shared one the same way:
 
 ```ruby
-receiver = RootCause::ActionRunner::ResultReceiver.new(RootCause::ActionRunner.config, nonce_store: MyCacheStore.new)
-mount RootCause::ActionRunner::ResultRackApp.new(receiver: receiver) => "/rootcause/result"
+receiver = RootCause::Embassy::ResultReceiver.new(RootCause::Embassy.config, nonce_store: MyCacheStore.new)
+mount RootCause::Embassy::ResultRackApp.new(receiver: receiver) => "/rootcause/result"
 ```
 
 Likewise, `capture_stdout` swaps the **process-global** `$stdout` for the duration of a run; under a

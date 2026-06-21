@@ -7,7 +7,7 @@ require "digest"
 require "fileutils"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Resolve an action's script body by digest. The digest is the authorization
     # unit: a body runs IFF sha256(body) equals the digest in the signed
     # invocation, so every body — cache hit or freshly fetched — is re-hashed and

@@ -6,7 +6,7 @@ require "stringio"
 require "digest"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Runs a digest-verified script body with params bound AS DATA.
     #
     # The body is compiled once per digest into a `lambda { |params| ... }`. Params

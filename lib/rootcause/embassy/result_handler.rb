@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Base class for the customer's async-result handler. Subclass it in app/ and
     # implement #process(result); the result route lazy-loads it by name on every
     # dispatch (reload-safe) and calls #process inline, under the configured

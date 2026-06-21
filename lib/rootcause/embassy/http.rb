@@ -3,7 +3,7 @@
 require "net/http"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Single Net::HTTP entry point shared by both directions that dial the
     # rootcause origin: the inbound script-fetch (Resolver, GET) and the outbound
     # analysis trigger (Client, POST). It centralizes the SSL + timeout wiring so

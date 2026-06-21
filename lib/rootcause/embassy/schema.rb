@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Re-validates invocation params against the schema the invocation carries.
     # This is defense in depth: rootcause already validated at propose-time, but
     # the runner never trusts the wire. A violation is a hard refuse.

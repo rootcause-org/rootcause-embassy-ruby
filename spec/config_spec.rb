@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe RootCause::ActionRunner::Config do
+RSpec.describe RootCause::Embassy::Config do
   it "validates fail-closed when the secret is missing" do
     cfg = described_class.new
     cfg.fetch_url = "https://x"
@@ -57,7 +57,7 @@ RSpec.describe RootCause::ActionRunner::Config do
   end
 end
 
-RSpec.describe RootCause::ActionRunner do
+RSpec.describe RootCause::Embassy do
   it "raises a clear error if used before configuration" do
     described_class.reset!
     expect { described_class.runner }.to raise_error(/not configured/)
@@ -68,7 +68,7 @@ RSpec.describe RootCause::ActionRunner do
       c.secret = "s"
       c.fetch_url = "https://x"
     }
-    expect(described_class.runner).to be_a(RootCause::ActionRunner::Runner)
+    expect(described_class.runner).to be_a(RootCause::Embassy::Runner)
     expect(described_class.config.secret).to eq("s")
   end
 end

@@ -2,9 +2,9 @@
 
 require "stringio"
 
-RSpec.describe RootCause::ActionRunner::RackApp do
+RSpec.describe RootCause::Embassy::RackApp do
   let(:config) { Wire.config }
-  let(:runner) { RootCause::ActionRunner::Runner.new(config) }
+  let(:runner) { RootCause::Embassy::Runner.new(config) }
   let(:app) { described_class.new(runner: runner) }
 
   def env_for(method:, body: "", signature: nil)
@@ -42,7 +42,7 @@ RSpec.describe RootCause::ActionRunner::RackApp do
   end
 
   it "falls back to the globally-configured runner when none is injected" do
-    RootCause::ActionRunner.configure { |c|
+    RootCause::Embassy.configure { |c|
       c.secret = Wire::SECRET
       c.fetch_url = Wire::FETCH_URL
       c.logger = nil

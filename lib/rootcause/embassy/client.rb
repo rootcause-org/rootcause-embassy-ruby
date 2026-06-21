@@ -7,7 +7,7 @@ require "time"
 require "securerandom"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # The outbound trigger — the opposite direction of the invocation flow, on the
     # SAME reverse-channel secret (no new crypto, no new secret). `start_analysis`
     # builds the documented body, signs the RAW JSON, POSTs it to the rootcause
@@ -39,7 +39,7 @@ module RootCause
       # @raise [ArgumentError] missing trigger_url, or an over-cap/malformed attachment
       def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil)
         url = @config.trigger_url
-        raise ArgumentError, "RootCause::ActionRunner: trigger_url is not configured" if blank?(url)
+        raise ArgumentError, "RootCause::Embassy: trigger_url is not configured" if blank?(url)
 
         metadata ||= {}
         payload = {
@@ -77,9 +77,9 @@ module RootCause
       # @raise [ArgumentError] missing sent_message_url, or blank sent_body/session_id
       def capture_sent_message(sent_body:, session_id:, proposed_body: nil, sender: nil, metadata: {})
         url = @config.sent_message_url
-        raise ArgumentError, "RootCause::ActionRunner: sent_message_url is not configured" if blank?(url)
-        raise ArgumentError, "RootCause::ActionRunner: sent_body is required" if blank?(sent_body)
-        raise ArgumentError, "RootCause::ActionRunner: session_id is required" if blank?(session_id)
+        raise ArgumentError, "RootCause::Embassy: sent_message_url is not configured" if blank?(url)
+        raise ArgumentError, "RootCause::Embassy: sent_body is required" if blank?(sent_body)
+        raise ArgumentError, "RootCause::Embassy: session_id is required" if blank?(session_id)
 
         metadata ||= {}
         sent = {"body" => sent_body}

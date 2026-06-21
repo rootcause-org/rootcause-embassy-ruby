@@ -4,7 +4,7 @@ require "stringio"
 
 # A recording handler, resolvable by name (Object.const_get) to exercise the
 # lazy-load path. Upserts by analysis_id so a redelivery can't duplicate.
-class SpecResultHandler < RootCause::ActionRunner::ResultHandler
+class SpecResultHandler < RootCause::Embassy::ResultHandler
   class << self
     def store = (@store ||= {})
     def reset! = (@store = {})
@@ -16,11 +16,11 @@ class SpecResultHandler < RootCause::ActionRunner::ResultHandler
 end
 
 # A handler that always blows up — proves a handler exception is NOT acked.
-class SpecBoomHandler < RootCause::ActionRunner::ResultHandler
+class SpecBoomHandler < RootCause::Embassy::ResultHandler
   def process(_result) = raise "boom"
 end
 
-RSpec.describe RootCause::ActionRunner::ResultReceiver do
+RSpec.describe RootCause::Embassy::ResultReceiver do
   let(:config) { Wire.config(result_handler: "SpecResultHandler") }
   let(:receiver) { described_class.new(config) }
 
@@ -38,7 +38,7 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
 
     expect(reply.status).to eq(200)
     expect(body_of(reply)).to eq({"ok" => true})
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
 
     delivered = SpecResultHandler.store.fetch("run-1")
     expect(delivered.metadata).to eq({resource_type: "SupportTicket", resource_id: 42})
@@ -51,7 +51,7 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
     expect(reply.status).to eq(401)
     expect(body_of(reply).dig("error", "class")).to eq("bad_signature")
     expect(SpecResultHandler.store).to be_empty
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
   end
 
   it "rejects a missing signature with 401" do
@@ -95,7 +95,7 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
 
     # The customer continues the thread with ONLY the new message.
     Wire.stub_trigger
-    RootCause::ActionRunner::Client.new(config).start_analysis(
+    RootCause::Embassy::Client.new(config).start_analysis(
       subject: "follow up", body: "new turn only", session_id: delivered.session_id
     )
 
@@ -120,7 +120,7 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
       reply = handle(Wire.result)
       expect(reply.status).to eq(500)
       expect(body_of(reply).dig("error", "class")).to eq("handler_error")
-      expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+      expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
     end
   end
 
@@ -143,7 +143,7 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
       expect(body_of(reply).dig("error", "class")).to eq("internal_error")
       # Message is the class only — never the (possibly input-bearing) message.
       expect(body_of(reply).dig("error", "message")).to eq("RuntimeError")
-      expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+      expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
     end
   end
 
@@ -154,9 +154,9 @@ RSpec.describe RootCause::ActionRunner::ResultReceiver do
   end
 end
 
-RSpec.describe RootCause::ActionRunner::ResultRackApp do
+RSpec.describe RootCause::Embassy::ResultRackApp do
   let(:config) { Wire.config(result_handler: "SpecResultHandler") }
-  let(:receiver) { RootCause::ActionRunner::ResultReceiver.new(config) }
+  let(:receiver) { RootCause::Embassy::ResultReceiver.new(config) }
   let(:app) { described_class.new(receiver: receiver) }
 
   before { SpecResultHandler.reset! }
@@ -194,7 +194,7 @@ RSpec.describe RootCause::ActionRunner::ResultRackApp do
   end
 
   it "falls back to the globally-configured receiver when none is injected" do
-    RootCause::ActionRunner.configure { |c|
+    RootCause::Embassy.configure { |c|
       c.secret = Wire::SECRET
       c.fetch_url = Wire::FETCH_URL
       c.result_handler = "SpecResultHandler"

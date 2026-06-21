@@ -1,9 +1,15 @@
-# rootcause-action-runner
+# rootcause-embassy (the **Embassy**, Ruby)
 
-A **thin Ruby gem** the customer mounts once in their Rails app — the first **action runner** in
-rootcause's **action plane**. It receives a signed, digest-pinned **invocation** from the rootcause
-host, **resolves the action's script by digest**, runs it **inline with a hard timeout**, and returns
-a **signed structured result**. No executable code ever travels on the wire.
+> Renamed from `rootcause-action-runner` / `RootCause::ActionRunner` (≤ 0.2.0) → `rootcause-embassy`
+> / `RootCause::Embassy` (0.3.0+). Repo: `rootcause-embassy-ruby` (per-language polyrepo; PHP/Node/.NET
+> Embassies are separate `rootcause-embassy-<lang>` repos).
+
+A **thin Ruby gem** the customer mounts once in their Rails app — the **Embassy**, rootcause's trusted
+in-app presence and the first **action runner** in rootcause's **action plane**. It receives a signed,
+digest-pinned **invocation** from the rootcause host, **resolves the action's script by digest**, runs
+it **inline with a hard timeout**, returns a **signed structured result**, and **receives
+async-analysis results** — all using the customer's own env, code, and tooling. No executable code
+ever travels on the wire.
 
 **The authoritative design for this gem is [SPEC.md](SPEC.md). Read it before changing behavior.**
 The whole-plane design lives in

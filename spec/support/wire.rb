@@ -13,7 +13,7 @@ module Wire
   module_function
 
   def sign(payload, secret: SECRET)
-    RootCause::ActionRunner::Signature.sign(payload, secret: secret)
+    RootCause::Embassy::Signature.sign(payload, secret: secret)
   end
 
   def digest_of(script)
@@ -47,12 +47,12 @@ module Wire
     WebMock.stub_request(:get, /rootcause\.test/).to_return(
       status: status,
       body: body,
-      headers: {RootCause::ActionRunner::Signature::HEADER => sign(body)}
+      headers: {RootCause::Embassy::Signature::HEADER => sign(body)}
     )
   end
 
   def config(**overrides)
-    cfg = RootCause::ActionRunner::Config.new
+    cfg = RootCause::Embassy::Config.new
     cfg.secret = SECRET
     cfg.fetch_url = FETCH_URL
     cfg.trigger_url = TRIGGER_URL

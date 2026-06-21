@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # The mounted HTTP handler — a thin Rack adapter over Runner. All it does is
     # pull the raw body and signature header off the request, hand them to the
     # framework-agnostic core, and serialize the signed Reply back. Mount it in
     # Rails routes (least magic, easy to restrict at the edge):
     #
-    #   mount RootCause::ActionRunner::RackApp.new => RootCause::ActionRunner.config.mount_at
+    #   mount RootCause::Embassy::RackApp.new => RootCause::Embassy.config.mount_at
     #
     # Named RackApp (not Rack) to avoid shadowing the Rack gem's top-level module.
     class RackApp
@@ -31,7 +31,7 @@ module RootCause
       # Resolve lazily so the app can be constructed at require-time (before the
       # initializer runs) yet still bind to the configured runner per request.
       def runner
-        @runner || RootCause::ActionRunner.runner
+        @runner || RootCause::Embassy.runner
       end
 
       def read_body(env)

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-ResolveError = RootCause::ActionRunner::ResolveError
+ResolveError = RootCause::Embassy::ResolveError
 
-RSpec.describe RootCause::ActionRunner::Resolver do
+RSpec.describe RootCause::Embassy::Resolver do
   let(:script) { "{ ok: true }" }
   let(:digest) { Wire.digest_of(script) }
   let(:config) { Wire.config }

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe RootCause::ActionRunner::Signature do
+RSpec.describe RootCause::Embassy::Signature do
   let(:secret) { "s3cr3t" }
   let(:body) { %({"a":1}) }
 

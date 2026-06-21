@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "rootcause-action-runner"
+require "rootcause-embassy"
 require "webmock/rspec"
 require "json"
 require "time"
@@ -15,7 +15,7 @@ RSpec.configure do |config|
   config.order = :random
   Kernel.srand config.seed
 
-  config.after { RootCause::ActionRunner.reset! }
+  config.after { RootCause::Embassy.reset! }
 end
 
 require_relative "support/wire"

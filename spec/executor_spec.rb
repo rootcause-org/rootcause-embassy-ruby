@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe RootCause::ActionRunner::Executor do
+RSpec.describe RootCause::Embassy::Executor do
   let(:config) { Wire.config(timeout: 2) }
   let(:executor) { described_class.new(config) }
 
@@ -59,7 +59,7 @@ RSpec.describe RootCause::ActionRunner::Executor do
   it "fails the run when the return value is not JSON-serializable" do
     result = run("0.0 / 0.0") # NaN — JSON.generate refuses it by default
     expect(result.ok).to be(false)
-    expect(result.error[:class]).to eq("RootCause::ActionRunner::NonSerializableResult")
+    expect(result.error[:class]).to eq("RootCause::Embassy::NonSerializableResult")
   end
 
   it "captures stdout when enabled" do

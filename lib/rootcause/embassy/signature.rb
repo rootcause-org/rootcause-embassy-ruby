@@ -3,7 +3,7 @@
 require "openssl"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # HMAC-SHA256 over a raw byte string, formatted as the wire header value
     # `sha256=<hex>`. Used in both directions: verify inbound invocations, sign
     # outbound fetches and results. Always verify-on-raw, never on re-serialized

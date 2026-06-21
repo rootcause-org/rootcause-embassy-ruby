@@ -2,7 +2,7 @@
 
 # The outbound trigger: build → sign → POST → parse {analysis_id}. The host's
 # trigger endpoint is stubbed via Wire (202 + analysis_id); no live host.
-RSpec.describe RootCause::ActionRunner::Client do
+RSpec.describe RootCause::Embassy::Client do
   let(:config) { Wire.config }
   let(:client) { described_class.new(config) }
 
@@ -24,7 +24,7 @@ RSpec.describe RootCause::ActionRunner::Client do
     expect(
       a_request(:post, Wire::TRIGGER_URL).with { |req|
         body = JSON.parse(req.body)
-        sig_ok = RootCause::ActionRunner::Signature.valid?(
+        sig_ok = RootCause::Embassy::Signature.valid?(
           req.headers["X-Webhook-Signature"], req.body, secret: Wire::SECRET
         )
         sig_ok &&
@@ -130,7 +130,7 @@ RSpec.describe RootCause::ActionRunner::Client do
     Wire.stub_trigger(status: 500)
     expect {
       client.start_analysis(subject: "s", body: "b")
-    }.to raise_error(RootCause::ActionRunner::TriggerError, /500/)
+    }.to raise_error(RootCause::Embassy::TriggerError, /500/)
   end
 
   it "raises TriggerError when the response omits analysis_id" do
@@ -139,14 +139,14 @@ RSpec.describe RootCause::ActionRunner::Client do
     )
     expect {
       client.start_analysis(subject: "s", body: "b")
-    }.to raise_error(RootCause::ActionRunner::TriggerError, /missing analysis_id/)
+    }.to raise_error(RootCause::Embassy::TriggerError, /missing analysis_id/)
   end
 
   it "raises TriggerError on a transport failure" do
     WebMock.stub_request(:post, Wire::TRIGGER_URL).to_timeout
     expect {
       client.start_analysis(subject: "s", body: "b")
-    }.to raise_error(RootCause::ActionRunner::TriggerError, /trigger failed/)
+    }.to raise_error(RootCause::Embassy::TriggerError, /trigger failed/)
   end
 
   it "raises ArgumentError when trigger_url is unconfigured" do
@@ -196,7 +196,7 @@ RSpec.describe RootCause::ActionRunner::Client do
       expect(
         a_request(:post, Wire::SENT_MESSAGE_URL).with { |req|
           body = JSON.parse(req.body)
-          sig_ok = RootCause::ActionRunner::Signature.valid?(
+          sig_ok = RootCause::Embassy::Signature.valid?(
             req.headers["X-Webhook-Signature"], req.body, secret: Wire::SECRET
           )
           sig_ok &&
@@ -260,14 +260,14 @@ RSpec.describe RootCause::ActionRunner::Client do
       Wire.stub_sent_message(status: 500)
       expect {
         client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
-      }.to raise_error(RootCause::ActionRunner::SentMessageError, /500/)
+      }.to raise_error(RootCause::Embassy::SentMessageError, /500/)
     end
 
     it "raises SentMessageError on a transport failure" do
       WebMock.stub_request(:post, Wire::SENT_MESSAGE_URL).to_timeout
       expect {
         client.capture_sent_message(sent_body: "reply", session_id: "sess-1")
-      }.to raise_error(RootCause::ActionRunner::SentMessageError, /capture failed/)
+      }.to raise_error(RootCause::Embassy::SentMessageError, /capture failed/)
     end
 
     describe "logging" do

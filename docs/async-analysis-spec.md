@@ -60,7 +60,7 @@ does. We do **not** add autonomous actions.
 Config additions (extends SPEC §4):
 
 ```ruby
-RootCause::ActionRunner.configure do |c|
+RootCause::Embassy.configure do |c|
   c.secret          = ENV.fetch("ROOTCAUSE_ACTION_SECRET") # SAME reverse-channel secret as invocations
   c.mount_at        = "/rootcause/action"                  # invocation route (unchanged)
   # --- new ---
@@ -74,7 +74,7 @@ end
 **Trigger** — call from anywhere in app code:
 
 ```ruby
-analysis = RootCause::ActionRunner.start_analysis(
+analysis = RootCause::Embassy.start_analysis(
   subject: ticket.subject,
   body:    ticket.body,                       # plain text only (v1)
   attachments: [
@@ -94,7 +94,7 @@ analysis.session_id   # => "uuid"  (host-minted; persist it to continue this con
 # app/jobs/analyze_ticket_job.rb
 class AnalyzeTicketJob < ApplicationJob
   def perform(ticket)
-    analysis = RootCause::ActionRunner.start_analysis(
+    analysis = RootCause::Embassy.start_analysis(
       subject:    ticket.subject,
       body:       ticket.body,                                       # plain text only (v1)
       metadata:   {resource_type: "SupportTicket", resource_id: ticket.id},
@@ -114,7 +114,7 @@ end
 
 ```ruby
 # app/rootcause/analysis_result_handler.rb
-class AnalysisResultHandler < RootCause::ActionRunner::ResultHandler
+class AnalysisResultHandler < RootCause::Embassy::ResultHandler
   # Runs inline in the result request, under the configured timeout. Keep it a quick write.
   # MUST be idempotent: rootcause redelivers on a lost ack (see §6).
   def process(result)
@@ -176,7 +176,7 @@ A follow-up is the **same call** with the persisted `session_id` and **only the 
 already holds the prior turns, so the gem never re-sends them:
 
 ```ruby
-RootCause::ActionRunner.start_analysis(
+RootCause::Embassy.start_analysis(
   subject:    "Still failing after the reset",
   body:       customer_reply,                  # just the new message, no prior history
   session_id: ticket.rc_session_id,            # the id you persisted from turn 1 / the result
@@ -262,7 +262,7 @@ So one result can both fill a draft *and* surface approve-buttons, cleanly separ
   `metadata` (or `analysis_id`), never blind-insert. Documented loudly, enforced by example.
 - **Fail closed** (mirrors SPEC §3): bad signature, stale/duplicate nonce, missing required fields,
   unconfigured `result_handler` → refuse, signed structured error, log it.
-- **Trigger failures** (`start_analysis`): non-2xx / timeout → raise a `RootCause::ActionRunner::TriggerError`;
+- **Trigger failures** (`start_analysis`): non-2xx / timeout → raise a `RootCause::Embassy::TriggerError`;
   the caller decides whether to retry (the call is the customer's, so no silent swallow).
 
 ## 6. Attachments (v1 constraints)
@@ -288,7 +288,7 @@ So one result can both fill a draft *and* surface approve-buttons, cleanly separ
 ## 8. Layout (new files)
 
 ```
-lib/rootcause/action_runner/
+lib/rootcause/embassy/
 ├── client.rb          # start_analysis: build → sign → POST → parse {analysis_id, session_id}
 ├── result.rb          # Result value object (symbol-keyed, frozen)
 ├── result_handler.rb  # base class; #process(result)

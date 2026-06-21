@@ -33,12 +33,12 @@ RSpec.describe "WIRE CONTRACT v1" do
     bytes
   end
 
-  def sign(bytes) = RootCause::ActionRunner::Signature.sign(bytes, secret: secret)
+  def sign(bytes) = RootCause::Embassy::Signature.sign(bytes, secret: secret)
 
   # A wide clock_skew so the static fixture issued_at never trips the freshness
   # window — the fixtures pin SHAPE, not freshness (freshness is covered elsewhere).
   let(:config) do
-    cfg = RootCause::ActionRunner::Config.new
+    cfg = RootCause::Embassy::Config.new
     cfg.secret = secret
     cfg.fetch_url = "https://rootcause.example.com/actions/script"
     cfg.logger = nil
@@ -46,7 +46,7 @@ RSpec.describe "WIRE CONTRACT v1" do
     cfg.clock_skew = 100 * 365 * 24 * 3600 # a century — fixtures are static
     cfg
   end
-  let(:runner) { RootCause::ActionRunner::Runner.new(config) }
+  let(:runner) { RootCause::Embassy::Runner.new(config) }
 
   def body_of(reply) = JSON.parse(reply.body)
 
@@ -56,7 +56,7 @@ RSpec.describe "WIRE CONTRACT v1" do
     WebMock.stub_request(:get, /rootcause\.example\.com/).to_return(
       status: 200,
       body: body,
-      headers: {RootCause::ActionRunner::Signature::HEADER => sign(body)}
+      headers: {RootCause::Embassy::Signature::HEADER => sign(body)}
     )
   end
 
@@ -76,7 +76,7 @@ RSpec.describe "WIRE CONTRACT v1" do
     expect(payload["stdout"]).to be_a(String)
     expect(payload["duration_ms"]).to be_a(Integer)
     # Signed over the EXACT reply bytes.
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
   end
 
   it "handles the dry_run Invocation variant: validate-only, would_execute, signed" do
@@ -91,7 +91,7 @@ RSpec.describe "WIRE CONTRACT v1" do
     expect(payload["return_value"]).to eq({"dry_run" => true, "would_execute" => true})
     expect(payload["stdout"]).to eq("")
     expect(payload["error"]).to be_nil
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
   end
 
   it "verifies + extracts a canonical signed FetchResponse (digest-verified)" do
@@ -99,11 +99,11 @@ RSpec.describe "WIRE CONTRACT v1" do
     WebMock.stub_request(:get, /rootcause\.example\.com/).to_return(
       status: 200,
       body: body,
-      headers: {RootCause::ActionRunner::Signature::HEADER => sign(body)}
+      headers: {RootCause::Embassy::Signature::HEADER => sign(body)}
     )
     parsed = JSON.parse(body)
 
-    script = RootCause::ActionRunner::Resolver.new(config).resolve(
+    script = RootCause::Embassy::Resolver.new(config).resolve(
       action_id: parsed["action_id"],
       digest: parsed["digest"],
       project_id: "00000000-0000-0000-0000-000000000000"
@@ -127,7 +127,7 @@ RSpec.describe "WIRE CONTRACT v1" do
     expect(payload.dig("error", "message")).to be_a(String)
     expect(stub).not_to have_been_requested
     # The refusal is signed so the host can trust it.
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: secret)).to be(true)
   end
 
   it "ties the invocation and fetch fixtures together by digest (the authorization unit)" do

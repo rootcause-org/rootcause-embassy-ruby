@@ -1,6 +1,6 @@
 # Sent-Message Capture Spec (gem side)
 
-**Status:** ready to build · **Repo:** `rootcause-action-runner` (the gem) · **Consumer spec:** `kampadmin/docs/specs/rootcause-sent-message-capture.md` · **Host spec:** `rootcause-light/docs/specs/sent-message-capture.md` (§ "Gem-facing route"). Build in lockstep — one shared wire contract (§3).
+**Status:** ready to build · **Repo:** `rootcause-embassy` (the gem) · **Consumer spec:** `kampadmin/docs/specs/rootcause-sent-message-capture.md` · **Host spec:** `rootcause-light/docs/specs/sent-message-capture.md` (§ "Gem-facing route"). Build in lockstep — one shared wire contract (§3).
 
 ## 1. Intent
 
@@ -10,12 +10,12 @@ persists it, keyed to the same `session_id` as the analysis, so a later story ca
 proposed-vs-sent delta. No analysis here — just transport.
 
 This is the gem-channel analogue of ReplyPen's `sent_capture` lane (ReplyPen has its own direct
-webhook path; the gem path is for apps that integrate via `RootCause::ActionRunner`, e.g.
+webhook path; the gem path is for apps that integrate via `RootCause::Embassy`, e.g.
 kampadmin). Both feed the **same** `sent_messages` sink on the host.
 
 ## 2. New public method — mirror `start_analysis`
 
-`start_analysis` (`lib/rootcause/action_runner/client.rb:36-57`) is the exact precedent: build
+`start_analysis` (`lib/rootcause/embassy/client.rb:36-57`) is the exact precedent: build
 payload → normalize → JSON → sign → POST → parse → return struct. Clone that shape.
 
 - **Config** (`config.rb`): add optional `attr_accessor :sent_message_url` (like `trigger_url`).
@@ -25,12 +25,12 @@ payload → normalize → JSON → sign → POST → parse → return struct. Cl
   private `post(url, raw)` helper (`client.rb:98-105`) → `Signature.sign` + `Http.perform`,
   header `X-Webhook-Signature`. Raise `SentMessageError < StandardError` (new, in `errors.rb`,
   raises to the caller — the caller decides retry/skip; do not swallow) on transport/non-2xx.
-- **Facade** (`action_runner.rb`): add `.capture_sent_message(...)` delegating to
+- **Facade** (`embassy.rb`): add `.capture_sent_message(...)` delegating to
   `client.capture_sent_message(...)`, mirroring the `.start_analysis` delegation at `:62-64`.
 - **Signature** params (Ruby kwargs):
 
 ```ruby
-RootCause::ActionRunner.capture_sent_message(
+RootCause::Embassy.capture_sent_message(
   sent_body:,        # String, required — the actual reply that left the building (markdown/plain)
   session_id:,       # String, required — same session handle used in start_analysis
   proposed_body: nil,# String — what rootcause proposed (for the delta); omit if unknown

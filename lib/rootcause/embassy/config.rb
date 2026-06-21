@@ -4,7 +4,7 @@ require "logger"
 require "uri"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Customer-supplied configuration, set once in an initializer. Values are read
     # on every request, so the same Config instance is shared and treated as
     # effectively immutable after boot.
@@ -93,18 +93,18 @@ module RootCause
       # Fail closed at boot rather than on the first invocation: a missing secret
       # or fetch_url is a deployment mistake, not a runtime condition.
       def validate!
-        raise ArgumentError, "RootCause::ActionRunner: secret is required" if blank?(secret)
-        raise ArgumentError, "RootCause::ActionRunner: fetch_url is required" if blank?(fetch_url)
+        raise ArgumentError, "RootCause::Embassy: secret is required" if blank?(secret)
+        raise ArgumentError, "RootCause::Embassy: fetch_url is required" if blank?(fetch_url)
         # When the reverse channel is active (secret present), the placeholder
         # fetch_url is a deployment mistake (ROOTCAUSE_FETCH_URL unset) that would
         # otherwise fail opaquely at the first resolve. Name the fix at boot. An
         # inert app (no secret) never fetches a script, so the placeholder is fine.
         if !blank?(secret) && placeholder_fetch_url?
           raise ArgumentError,
-            "RootCause::ActionRunner: fetch_url is the placeholder " \
+            "RootCause::Embassy: fetch_url is the placeholder " \
             "(#{fetch_url}) — set ROOTCAUSE_FETCH_URL to the host's /actions/script endpoint"
         end
-        raise ArgumentError, "RootCause::ActionRunner: timeout must be positive" unless timeout.to_f > 0
+        raise ArgumentError, "RootCause::Embassy: timeout must be positive" unless timeout.to_f > 0
         self
       end
 

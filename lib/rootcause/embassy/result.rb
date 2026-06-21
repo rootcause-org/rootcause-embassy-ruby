@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # The async analysis result handed to the customer's ResultHandler. Field names
     # are taken VERBATIM from rootcause's webhook.CallbackPayload and ReplyPen's
     # contract so all three products serialize identically. A frozen, symbol-keyed

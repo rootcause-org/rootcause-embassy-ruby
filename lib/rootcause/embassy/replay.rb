@@ -3,7 +3,7 @@
 require "time"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Replay guard: an invocation is accepted at most once, and only inside a
     # bounded freshness window. Two independent checks, both fail-closed:
     #

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Base for every refusal the runner raises before/around executing an action.
     #
     # Each carries an HTTP `status` and a stable `code` so the Rack shell can turn

@@ -2,7 +2,7 @@
 
 # End-to-end through the framework-agnostic core: verify → replay → validate →
 # resolve → run → sign. The host side (signing + script fetch) is stubbed via Wire.
-RSpec.describe RootCause::ActionRunner::Runner do
+RSpec.describe RootCause::Embassy::Runner do
   let(:config) { Wire.config }
   let(:runner) { described_class.new(config) }
 
@@ -26,7 +26,7 @@ RSpec.describe RootCause::ActionRunner::Runner do
     reply = handle(inv)
 
     expect(reply.status).to eq(200)
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
     payload = body_of(reply)
     expect(payload["ok"]).to be(true)
     expect(payload["return_value"]).to eq({"found" => true, "email" => "x@acme.com"})
@@ -37,7 +37,7 @@ RSpec.describe RootCause::ActionRunner::Runner do
     reply = handle(Wire.invocation, secret: "wrong-secret")
     expect(reply.status).to eq(401)
     expect(body_of(reply).dig("error", "class")).to eq("bad_signature")
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
   end
 
   it "rejects malformed JSON with 400" do
@@ -90,13 +90,13 @@ RSpec.describe RootCause::ActionRunner::Runner do
     inv = Wire.invocation(params: {"email" => "x@y.z"}, schema: {"email" => "string"})
     reply = handle(inv)
     expect(reply.status).to eq(422) # SchemaError now covers the shorthand
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
   end
 
   it "returns a signed 500 if a pipeline step raises an unexpected error" do
     # Force a non-Error exception from inside the pipeline (post-auth) and prove
     # the backstop signs and structures it rather than letting it escape.
-    allow(RootCause::ActionRunner::Schema).to receive(:validate!).and_raise(RuntimeError, "x@acme.com leaked?")
+    allow(RootCause::Embassy::Schema).to receive(:validate!).and_raise(RuntimeError, "x@acme.com leaked?")
     reply = handle(Wire.invocation)
     expect(reply.status).to eq(500)
     payload = body_of(reply)
@@ -106,7 +106,7 @@ RSpec.describe RootCause::ActionRunner::Runner do
     # input-bearing) exception message.
     expect(payload.dig("error", "message")).to eq("RuntimeError")
     expect(reply.body).not_to include("x@acme.com")
-    expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+    expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
   end
 
   it "returns 200 with ok:false when the action itself raises" do
@@ -121,7 +121,7 @@ RSpec.describe RootCause::ActionRunner::Runner do
     it "runs verify→replay→schema→resolve but never executes, returning a signed would_execute result" do
       script = "raise 'must not run'" # proves the executor is skipped
       stub = Wire.stub_fetch(script: script)
-      executor = instance_double(RootCause::ActionRunner::Executor)
+      executor = instance_double(RootCause::Embassy::Executor)
       allow(executor).to receive(:run)
       runner = described_class.new(config, executor: executor)
 
@@ -138,7 +138,7 @@ RSpec.describe RootCause::ActionRunner::Runner do
       # The signed fetch (digest-verified resolve) WAS exercised; the executor was NOT.
       expect(stub).to have_been_requested
       expect(executor).not_to have_received(:run)
-      expect(RootCause::ActionRunner::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
+      expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: Wire::SECRET)).to be(true)
     end
 
     it "still returns the resolve_failed refusal when resolve fails under dry_run (no side-effect-free pass)" do

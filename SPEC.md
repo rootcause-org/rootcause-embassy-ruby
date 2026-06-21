@@ -1,10 +1,15 @@
-# rootcause-action-runner — the customer-side action runner gem
+# rootcause-embassy — rootcause's in-app presence in the customer's Ruby runtime
 
-A **thin Ruby gem** the customer mounts once in their Rails app. It is the **first action runner**
-in rootcause's **action plane**: it receives a signed **invocation** from the rootcause host,
-**resolves the action's script by digest**, runs it **inline with a hard timeout**, and returns a
-**signed structured result**. No executable code ever travels in the invocation; the gem only runs a
-script whose `sha256` equals the approved `script_digest`.
+> **Renamed:** formerly `rootcause-action-runner` / `RootCause::ActionRunner` (≤ 0.2.0); now
+> `rootcause-embassy` / `RootCause::Embassy` (0.3.0+). Repo is `rootcause-embassy-ruby` — the
+> per-language Ruby Embassy.
+
+A **thin Ruby gem** the customer mounts once in their Rails app — the **Embassy**, rootcause's
+trusted in-app presence and the **first action runner** in rootcause's **action plane**. It receives
+a signed **invocation** from the rootcause host, **resolves the action's script by digest**, runs it
+**inline with a hard timeout**, returns a **signed structured result**, and **receives async-analysis
+results**. No executable code ever travels in the invocation; the gem only runs a script whose
+`sha256` equals the approved `script_digest`.
 
 > **This repo is the gem only.** The host (registry, signer, confirm/execute pages, audit) lives in
 > [`rootcause-light`](https://github.com/rootcause-org/rootcause-light). The authoritative design for
@@ -44,7 +49,7 @@ flowchart LR
     end
     subgraph cust["customer Rails app"]
         route[mounted route<br/>POST /rootcause/action]
-        runner["RootCause::ActionRunner<br/>verify sig + replay → validate params →<br/>resolve script by digest → run (timeout) → sign result"]
+        runner["RootCause::Embassy<br/>verify sig + replay → validate params →<br/>resolve script by digest → run (timeout) → sign result"]
         cache[(script cache<br/>digest → script.rb)]
     end
     signer -->|signed invocation<br/>action_id + params + digest · NO code| egress
@@ -85,12 +90,12 @@ A single mounted handler does exactly this, fail-closed at every step:
 
 ```ruby
 # Gemfile
-gem "rootcause-action-runner"
+gem "rootcause-embassy"
 ```
 
 ```ruby
 # config/initializers/rootcause.rb
-RootCause::ActionRunner.configure do |c|
+RootCause::Embassy.configure do |c|
   c.secret    = ENV.fetch("ROOTCAUSE_ACTION_SECRET")    # reverse-channel HMAC secret (per project)
   c.mount_at  = "/rootcause/action"                     # the single route
   c.fetch_url = "https://<rootcause>/actions/script"    # script-by-digest endpoint
@@ -197,8 +202,8 @@ Open scaffolding decisions to settle when we start coding:
 ## 9. Layout (planned — gem skeleton)
 
 ```
-rootcause-action-gem/
-├── rootcause-action-runner.gemspec
+rootcause-embassy-ruby/
+├── rootcause-embassy.gemspec
 ├── Gemfile
 ├── Rakefile
 ├── mise.toml                      # Ruby version (mise-managed)
@@ -210,7 +215,7 @@ rootcause-action-gem/
 ├── SPEC.md                        # this file
 ├── lib/
 │   └── rootcause/
-│       └── action_runner/
+│       └── embassy/
 │           ├── version.rb
 │           ├── config.rb          # the configure block
 │           ├── signature.rb       # HMAC sign/verify, constant-time

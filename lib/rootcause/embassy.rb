@@ -1,30 +1,32 @@
 # frozen_string_literal: true
 
-require_relative "action_runner/version"
-require_relative "action_runner/errors"
-require_relative "action_runner/config"
-require_relative "action_runner/signature"
-require_relative "action_runner/http"
-require_relative "action_runner/schema"
-require_relative "action_runner/replay"
-require_relative "action_runner/resolver"
-require_relative "action_runner/executor"
-require_relative "action_runner/runner"
-require_relative "action_runner/rack"
-require_relative "action_runner/result"
-require_relative "action_runner/result_handler"
-require_relative "action_runner/client"
-require_relative "action_runner/result_rack"
+require_relative "embassy/version"
+require_relative "embassy/errors"
+require_relative "embassy/config"
+require_relative "embassy/signature"
+require_relative "embassy/http"
+require_relative "embassy/schema"
+require_relative "embassy/replay"
+require_relative "embassy/resolver"
+require_relative "embassy/executor"
+require_relative "embassy/runner"
+require_relative "embassy/rack"
+require_relative "embassy/result"
+require_relative "embassy/result_handler"
+require_relative "embassy/client"
+require_relative "embassy/result_rack"
 
 module RootCause
-  # The customer-side action runner. Configure once at boot; the mounted RackApp
-  # then turns each signed, digest-pinned invocation into a signed result.
-  module ActionRunner
+  # The Embassy — rootcause's trusted in-app presence in the customer's runtime.
+  # Configure once at boot; the mounted RackApp then turns each signed,
+  # digest-pinned invocation into a signed result, and the result channel receives
+  # async-analysis results.
+  module Embassy
     class << self
       # Configure once in an initializer; validates fail-closed at boot and builds
       # the singleton Runner (with its nonce store and script/compile caches).
       #
-      #   RootCause::ActionRunner.configure do |c|
+      #   RootCause::Embassy.configure do |c|
       #     c.secret    = ENV.fetch("ROOTCAUSE_ACTION_SECRET")
       #     c.fetch_url = "https://<rootcause>/actions/script"
       #     c.timeout   = 20
@@ -42,19 +44,19 @@ module RootCause
       end
 
       def config
-        @config || raise("RootCause::ActionRunner is not configured — call .configure first")
+        @config || raise("RootCause::Embassy is not configured — call .configure first")
       end
 
       def runner
-        @runner || raise("RootCause::ActionRunner is not configured — call .configure first")
+        @runner || raise("RootCause::Embassy is not configured — call .configure first")
       end
 
       def client
-        @client || raise("RootCause::ActionRunner is not configured — call .configure first")
+        @client || raise("RootCause::Embassy is not configured — call .configure first")
       end
 
       def result_receiver
-        @result_receiver || raise("RootCause::ActionRunner is not configured — call .configure first")
+        @result_receiver || raise("RootCause::Embassy is not configured — call .configure first")
       end
 
       # Outbound trigger: ask rootcause to analyze something and get an analysis_id

@@ -4,7 +4,7 @@ require "json"
 require "timeout"
 
 module RootCause
-  module ActionRunner
+  module Embassy
     # Framework-agnostic core of the result route: verify → replay → dispatch →
     # signed ack, fail-closed at every step — the inbound mirror of Runner for the
     # invocation path, on the same reverse-channel secret. Reuses Signature,
@@ -124,7 +124,7 @@ module RootCause
     # Thin Rack shell over ResultReceiver — the mirror of RackApp for the result
     # route. Mount it alongside the invocation route:
     #
-    #   mount RootCause::ActionRunner::ResultRackApp.new => RootCause::ActionRunner.config.result_mount_at
+    #   mount RootCause::Embassy::ResultRackApp.new => RootCause::Embassy.config.result_mount_at
     class ResultRackApp
       SIG_HEADER_ENV = "HTTP_X_WEBHOOK_SIGNATURE"
       JSON_TYPE = "application/json"
@@ -146,7 +146,7 @@ module RootCause
       # Resolve lazily so the app can be constructed at require-time (before the
       # initializer runs) yet still bind to the configured receiver per request.
       def receiver
-        @receiver || RootCause::ActionRunner.result_receiver
+        @receiver || RootCause::Embassy.result_receiver
       end
 
       def read_body(env)
