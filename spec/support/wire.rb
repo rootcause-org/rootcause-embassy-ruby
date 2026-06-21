@@ -84,6 +84,20 @@ module Wire
     )
   end
 
+  # The canonical proposed-action object as it rides at the result envelope's
+  # top-level `actions[]`. `slug` is the registry action id; `id` is the
+  # action_run uuid. Override any field via kwargs.
+  def action(**overrides)
+    {
+      "id" => "action-run-uuid-1",
+      "slug" => "recompute_record_formulas",
+      "label" => "Run: recompute record formulas",
+      "description" => "what it would do — preflight summary",
+      "url" => "https://rootcause.test/actions/single-use-token",
+      "color" => "#1a7f37"
+    }.merge(overrides)
+  end
+
   # A valid result body (Ruby hash) as rootcause POSTs to the result route.
   # Override or add CallbackPayload fields via kwargs.
   def result(**overrides)
@@ -96,7 +110,7 @@ module Wire
         {"kind" => "summary", "body_markdown" => "Summary. [run trace](https://rc/runs/1)", "body_html" => "<p>Summary.</p>"},
         {"kind" => "widget", "body_markdown" => "widget detail", "body_html" => "<p>widget</p>"}
       ],
-      "actions" => [],
+      "actions" => [action],
       "reasoning_steps" => [],
       "attachments" => [],
       "decline" => nil,

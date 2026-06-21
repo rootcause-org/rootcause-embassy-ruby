@@ -12,7 +12,9 @@ module RootCause
     # auto-burn into the customer's records); `actions[]` are vetted side-effects
     # rootcause PROPOSES — the customer renders them for a human to click, and they
     # ride back through the gem's existing invocation route. The gem never auto-runs
-    # them, so no "autonomous action" feature is needed.
+    # them, so no "autonomous action" feature is needed. Each action is a pass-through
+    # hash with { id (action_run uuid), slug (registry action id), label, description,
+    # url (single-use token), color }; read fields via symbol keys.
     #
     # `draft` and `note` are surfaced as **markdown strings**, not the raw nested
     # nodes: `draft` is the drafted answer's `body_markdown`; `note` is the SUMMARY

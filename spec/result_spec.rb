@@ -10,7 +10,7 @@ RSpec.describe RootCause::Embassy::Result do
         {"kind" => "summary", "body_markdown" => "the summary [trace](https://x)", "body_html" => "<p>s</p>"},
         {"kind" => "widget", "body_markdown" => "a widget", "body_html" => "<p>w</p>"}
       ],
-      "actions" => [{"id" => "a1", "label" => "Approve", "description" => "d", "url" => "https://x", "color" => "green"}],
+      "actions" => [{"id" => "a1", "slug" => "recompute_record_formulas", "label" => "Approve", "description" => "d", "url" => "https://x", "color" => "green"}],
       "reasoning_steps" => ["looked", "concluded"],
       "attachments" => [{"filename" => "f.txt", "mime_type" => "text/plain", "content_base64" => "eA=="}]
     )
@@ -19,7 +19,12 @@ RSpec.describe RootCause::Embassy::Result do
     expect(result.metadata).to eq({resource_type: "SupportTicket", resource_id: 42})
     expect(result.draft).to eq("**hi**")
     expect(result.note).to eq("the summary [trace](https://x)")
+    expect(result.actions.first[:slug]).to eq("recompute_record_formulas")
+    expect(result.actions.first[:id]).to eq("a1")
     expect(result.actions.first[:label]).to eq("Approve")
+    expect(result.actions.first[:url]).to eq("https://x")
+    expect(result.actions.first[:color]).to eq("green")
+    expect(result.actions.first[:description]).to eq("d")
     expect(result.reasoning_steps).to eq(["looked", "concluded"])
     expect(result.attachments.first[:filename]).to eq("f.txt")
     expect(result).to be_frozen
