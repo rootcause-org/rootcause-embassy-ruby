@@ -19,8 +19,8 @@ module RootCause
     # note's `body_markdown` (rootcause delivers `notes[]` keyed by `key` — one
     # `summary` note plus zero or more other-keyed notes, e.g. a `trace` link note;
     # we surface only the summary). HTML is a fallback only when markdown is absent
-    # (the host is migrating notes from `body_html` to `body_markdown`). The run-trace
-    # link is read programmatically from `metadata[:trace_url]`, not parsed out of a
+    # (the host is migrating notes from `body_html` to `body_markdown`). The run-page
+    # link is read programmatically from `metadata[:run_url]`, not parsed out of a
     # note body.
     #
     # `session_id` is the host-managed conversation key — opaque to the gem. Persist
@@ -32,7 +32,7 @@ module RootCause
 
       # The note `key` that carries the human-facing summary. The host
       # (webhook.CallbackNote) discriminates notes by `key` — NoteKeySummary; other
-      # keys (e.g. NoteKeyTrace) are surfaced elsewhere (trace via metadata[:trace_url])
+      # keys (e.g. NoteKeyTrace) are surfaced elsewhere (run page via metadata[:run_url])
       # and never burned into `note`.
       SUMMARY_KEY = "summary"
 
@@ -91,7 +91,7 @@ module RootCause
       # the host marks none explicitly, fall back to the first so a single unkeyed
       # note still surfaces — but an explicit summary always wins over array order, so
       # a later "trace" note can never clobber it. Other-keyed notes are never
-      # surfaced here (the trace link is read from metadata[:trace_url]).
+      # surfaced here (the run-page link is read from metadata[:run_url]).
       def self.summary_note(notes)
         return nil unless notes.is_a?(Array) && !notes.empty?
 

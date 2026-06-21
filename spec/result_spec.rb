@@ -101,12 +101,12 @@ RSpec.describe RootCause::Embassy::Result do
     end
   end
 
-  it "exposes the run-trace link via metadata[:trace_url], not via a note" do
+  it "exposes the run-page link via metadata[:run_url], not via a note" do
     result = described_class.from_payload(
-      "metadata" => {"trace_url" => "https://trace/run-1"},
+      "metadata" => {"run_url" => "https://run/run-1"},
       "notes" => [{"key" => "summary", "body_markdown" => "the summary"}]
     )
-    expect(result.metadata[:trace_url]).to eq("https://trace/run-1")
+    expect(result.metadata[:run_url]).to eq("https://run/run-1")
     expect(result.note).to eq("the summary")
   end
 
