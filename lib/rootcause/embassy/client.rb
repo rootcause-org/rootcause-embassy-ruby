@@ -34,10 +34,11 @@ module RootCause
       # @param session_id [String, nil] a prior turn's host-minted session id. When
       #   present, this turn continues that conversation — send ONLY the new
       #   subject/body, never prior history (the host keeps it). Opaque to the gem.
+      # @param tenant [String, nil] optional rootcause tenant slug for tenant-enabled projects.
       # @return [Analysis]
       # @raise [TriggerError] non-2xx, malformed response, or transport failure
       # @raise [ArgumentError] missing trigger_url, or an over-cap/malformed attachment
-      def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil)
+      def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil, tenant: nil)
         url = @config.trigger_url
         raise ArgumentError, "RootCause::Embassy: trigger_url is not configured" if blank?(url)
 
@@ -53,6 +54,7 @@ module RootCause
         # Only carry session_id on a follow-up; the first turn omits it and the host
         # mints one, returned in the 202 below.
         payload["session_id"] = session_id unless blank?(session_id)
+        payload["tenant"] = tenant unless blank?(tenant)
         raw = JSON.generate(payload)
 
         response = post(url, raw, transport_error: TriggerError, label: "analysis trigger")

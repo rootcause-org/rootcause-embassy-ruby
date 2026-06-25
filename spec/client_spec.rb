@@ -54,6 +54,17 @@ RSpec.describe RootCause::Embassy::Client do
     ).to have_been_made
   end
 
+  it "forwards tenant in the trigger body for tenant-enabled projects" do
+    Wire.stub_trigger
+    client.start_analysis(subject: "support ticket", body: "details", tenant: "heyo")
+
+    expect(
+      a_request(:post, Wire::TRIGGER_URL).with { |req|
+        JSON.parse(req.body)["tenant"] == "heyo"
+      }
+    ).to have_been_made
+  end
+
   it "omits session_id from the trigger body on the first turn (absent/blank)" do
     Wire.stub_trigger
 
