@@ -54,9 +54,9 @@ module RootCause
         ensure_serializable!(return_value)
         success(return_value, stdout, started)
       rescue Timeout::Error
-        failure("Timeout::Error", "action exceeded #{@config.timeout}s timeout", [], stdout, started)
+        failure("Timeout::Error", "action exceeded #{@config.timeout}s timeout", nil, stdout, started)
       rescue ScriptError, StandardError => e
-        failure(e.class.name, e.message.to_s, Array(e.backtrace), stdout, started)
+        failure(e.class.name, e.message.to_s, e.backtrace, stdout, started)
       end
 
       private
@@ -126,11 +126,19 @@ module RootCause
           error: {
             class: klass,
             message: message,
-            backtrace: backtrace.first(@config.max_backtrace_lines)
+            backtrace: format_backtrace(backtrace)
           },
           stdout: finalize_stdout(stdout),
           duration_ms: elapsed_ms(started)
         )
+      end
+
+      # The wire contract types error.backtrace as a STRING (frames joined with
+      # "\n"), not an array — a host decoding it into a string field cannot
+      # unmarshal an array, and the whole result (including the real exception)
+      # is lost. Truncate to max_backtrace_lines frames, then join.
+      def format_backtrace(backtrace)
+        Array(backtrace).first(@config.max_backtrace_lines).join("\n")
       end
 
       # Capture the action's $stdout. CAVEAT: $stdout is process-global, so under a

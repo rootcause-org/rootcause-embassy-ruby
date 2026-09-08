@@ -156,7 +156,8 @@ action plane on: the plane is enabled only by configuring `secret` (or `secrets`
    source**; trusted tenant context is available as `RC_TENANT_ID`, `RC_TENANT_SLUG`, and
    `RC_TENANT_SCOPE_VALUE` for the duration of the action.
 7. **Hard timeout** (execute backstop, inside the invocation-wide `total_deadline`) + rescue
-   everything → structured `error{class, message, backtrace}`.
+   everything → structured `error{class, message, backtrace}` (`backtrace` is a newline-joined
+   **string**, capped at `max_backtrace_lines` frames — the wire contract's type).
 8. **Return signed JSON** — `{ ok, return_value | error, stdout, duration_ms }`. Logs `action_id`,
    `digest`, param **keys**, `ok`, `duration_ms` — never the secret or param values.
 

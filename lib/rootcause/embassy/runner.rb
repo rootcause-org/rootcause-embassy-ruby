@@ -106,7 +106,7 @@ module RootCause
           error: {
             class: "Timeout::Error",
             message: "invocation exceeded #{@config.total_deadline}s total deadline",
-            backtrace: []
+            backtrace: ""
           },
           stdout: "",
           duration_ms: (clock_ms - started).round

@@ -98,6 +98,18 @@ RSpec.describe "hub contract conformance" do
     end
   end
 
+  it "types a script-raised error's backtrace as a newline-joined string" do
+    error = JSON.parse(fixture("actions/result_action_error.json")).fetch("error")
+    expect(error.fetch("backtrace")).to be_a(String)
+
+    produced = RootCause::Embassy::Executor.new(Wire.config).run(
+      script: "raise ArgumentError, 'boom'", params: {}, digest: Wire.digest_of("raise ArgumentError, 'boom'")
+    )
+    expect(produced.error[:class]).to eq("ArgumentError")
+    expect(produced.error[:backtrace]).to be_a(String)
+    expect(JSON.parse(JSON.generate(produced.error)).fetch("backtrace")).to be_a(String)
+  end
+
   it "decodes the answers-only capture fixture" do
     answers = JSON.parse(fixture("analysis/answers.json"))
     expect(answers).not_to have_key("sent")

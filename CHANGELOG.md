@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+Integrator-visible changes:
+
+- **`error.backtrace` is now a STRING**, frames joined with `"\n"` and still capped at
+  `max_backtrace_lines`. It was a JSON array, which the rootcause host (and the wire contract:
+  `rootcause-embassy/CONTRACT.md`, golden `fixtures/actions/result_action_error.json`) decodes into a
+  string field — so **every action whose script raised** came back as a signed HTTP 200 the host could
+  not unmarshal, settling the run as `uncertain`/`parse_result` and losing the real exception. The
+  total-deadline result now carries `""` instead of `[]` for the same reason.
+- Contract fixtures re-vendored from hub `9851dc4bd2017a07bdfeb9505bb3e4cd82c385f7`.
+
 ## 0.9.0
 
 Integrator-visible changes:

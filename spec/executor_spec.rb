@@ -107,12 +107,19 @@ RSpec.describe RootCause::Embassy::Executor do
     expect(result.ok).to be(false)
     expect(result.error[:class]).to eq("ArgumentError")
     expect(result.error[:message]).to eq("boom")
-    expect(result.error[:backtrace]).to be_an(Array)
+    # The wire contract types backtrace as a STRING; an array is undecodable host-side.
+    expect(result.error[:backtrace]).to be_a(String)
   end
 
   it "reports backtrace frames carrying the script's own line numbers" do
     result = run("a = 1\nraise 'x'") # raise is on script line 2
-    expect(result.error[:backtrace].first).to match(/rootcause-action.*:2/)
+    expect(result.error[:backtrace].lines.first).to match(/rootcause-action.*:2/)
+  end
+
+  it "joins backtrace frames with newlines and caps them at max_backtrace_lines" do
+    config.max_backtrace_lines = 2
+    backtrace = run("raise 'deep'").error[:backtrace]
+    expect(backtrace.split("\n").length).to eq(2)
   end
 
   it "fails the run when the return value is not JSON-serializable" do
