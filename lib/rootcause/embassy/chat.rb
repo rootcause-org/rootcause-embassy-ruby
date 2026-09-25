@@ -40,7 +40,7 @@ module RootCause
 
       # The loader is immutable-cached by the host. Bump this whenever the generated tag starts
       # relying on new loader behavior, so a page cannot pair fresh attributes with stale JavaScript.
-      LOADER_CONTRACT = "2"
+      LOADER_CONTRACT = "3"
 
       module_function
 

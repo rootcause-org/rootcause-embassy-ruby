@@ -63,7 +63,7 @@ analysis/
   answers.json                          answers-only variant (no sent body)
 chat/
   jwt_vector.json                       secret + claims + iat → the exact token string
-  widget_tag.html                       the loader <script> tag, ?v=2
+  widget_tag.html                       the loader <script> tag, ?v=3
   sse_frames.jsonl                      redacted decoded data frames from one complete SSE turn
 ```
 
