@@ -146,6 +146,13 @@ available at `{mount_at}/health` when actions are configured.
 The gem implements the **customer side** of Appendix A of the action-plane spec. Three messages, all
 signed with the reverse-channel secret, verify-on-raw, constant-time:
 
+Optional signed inline uploads use the hub's parameter-keyed `attachments` extension. Ruby exposes
+verified tempfiles as `RC_ACTION_ATTACHMENTS` JSON with `mime_type` and `path` or per-file `error`;
+UUID params are unchanged. `RC_ACTION_DEADLINE_AT` reserves two seconds before the earliest
+whole-invocation/execution cutoff. Files and environment context are execution-scoped. Limits and
+validation are authoritative in the hub's `planes/actions.md`; signed health advertises
+`attachments_inline`. Dry run validates without materializing.
+
 **Invocation** (rootcause → gem), `POST {mount_at}` — **no script body**:
 
 ```jsonc

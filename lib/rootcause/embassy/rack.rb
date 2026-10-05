@@ -30,6 +30,8 @@ module RootCause
         health(env) if env["PATH_INFO"] == "/health"
       end
 
+      def body_limit = InlineAttachments::MAX_BODY_BYTES + 1
+
       def health(env)
         respond(core.health(raw_query: env["QUERY_STRING"].to_s, signature: env[SIG_HEADER_ENV]))
       end

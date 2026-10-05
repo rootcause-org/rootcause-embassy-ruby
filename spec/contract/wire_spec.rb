@@ -65,6 +65,21 @@ RSpec.describe "hub contract conformance" do
     expect(result.project_id).to eq(flat.fetch("project_id"))
   end
 
+  it "materializes the signed attachment golden without flattening parameter names" do
+    invocation = JSON.parse(fixture("actions/invocation_attachments.json"))
+    map = RootCause::Embassy::InlineAttachments.validate!(invocation)
+    paths = []
+    RootCause::Embassy::InlineAttachments.with_materialized(map) do |materialized|
+      files = materialized.fetch("attachments")
+      expect(File.binread(files.first.fetch("path"))).to eq("hello")
+      expect(files.first).to include("mime_type" => "text/plain", "size_bytes" => 5)
+      expect(files.last).to include("error" => "unavailable", "mime_type" => "video/mp4")
+      expect(files.last).not_to have_key("path")
+      paths << files.first.fetch("path")
+    end
+    paths.each { |path| expect(File).not_to exist(path) }
+  end
+
   it "matches refusal classes to their status vocabulary and keeps their vectors signed" do
     {
       "bad_signature" => 401,
@@ -186,7 +201,7 @@ RSpec.describe "hub contract conformance" do
       query = ""
       reply = runner.health(raw_query: query, signature: RootCause::Embassy::Signature.sign(query, secret: reverse_secret))
 
-      pinned = utf8_fixture("actions/health_response.json").sub(/"version":"[^"]+"/, %("version":"#{RootCause::Embassy::VERSION}"))
+      pinned = utf8_fixture("actions/health_response_attachments.json").sub(/"version":"[^"]+"/, %("version":"#{RootCause::Embassy::VERSION}"))
       expect(reply.body).to eq(pinned)
       expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: reverse_secret)).to be(true)
     end

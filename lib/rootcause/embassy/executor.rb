@@ -25,7 +25,8 @@ module RootCause
       TENANT_ENV_KEYS = %w[RC_TENANT_ID RC_TENANT_SLUG RC_TENANT_SCOPE_VALUE].freeze
       PRINCIPAL_ENV_KEYS = %w[RC_PRINCIPAL_KIND RC_PRINCIPAL_EXTERNAL_ID].freeze
       PRINCIPAL_CLAIM_ENV_PATTERN = /\ARC_PRINCIPAL_CLAIM_[A-Z][A-Z0-9_]*\z/
-      TRUSTED_ENV_KEYS = (TENANT_ENV_KEYS + PRINCIPAL_ENV_KEYS).freeze
+      ACTION_ENV_KEYS = %w[RC_ACTION_ATTACHMENTS RC_ACTION_DEADLINE_AT].freeze
+      TRUSTED_ENV_KEYS = (TENANT_ENV_KEYS + PRINCIPAL_ENV_KEYS + ACTION_ENV_KEYS).freeze
       FLAT_TRUSTED_ENV = {}.freeze
       PROCESS_EXECUTION_MUTEX = Mutex.new
 
@@ -35,7 +36,7 @@ module RootCause
         @mutex = Mutex.new
       end
 
-      def run(script:, params:, digest:, trusted_env: FLAT_TRUSTED_ENV)
+      def run(script:, params:, digest:, trusted_env: FLAT_TRUSTED_ENV, attachments: {}, deadline_at: nil)
         stdout = +""
         started = clock_ms
         # Defensive: the body is handed params AS DATA. Schema already deep-freezes
@@ -43,10 +44,15 @@ module RootCause
         params = params.freeze
 
         return_value = PROCESS_EXECUTION_MUTEX.synchronize do
-          with_trusted_environment(trusted_env) do
-            capture_stdout(stdout) do
-              callable = compile(script, digest)
-              Timeout.timeout(@config.timeout.to_f) { callable.call(params) }
+          execution_deadline = Time.now.to_f + @config.timeout.to_f
+          deadline = [deadline_at || execution_deadline, execution_deadline].min - 2
+          Timeout.timeout(@config.timeout.to_f) do
+            InlineAttachments.with_materialized(attachments) do |materialized|
+              context = trusted_env.merge("RC_ACTION_DEADLINE_AT" => deadline.to_s)
+              context["RC_ACTION_ATTACHMENTS"] = JSON.generate(materialized) unless materialized.empty?
+              with_trusted_environment(context) do
+                capture_stdout(stdout) { compile(script, digest).call(params) }
+              end
             end
           end
         end

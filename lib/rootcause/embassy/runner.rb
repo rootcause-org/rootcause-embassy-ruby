@@ -49,7 +49,10 @@ module RootCause
         return selector_failure unless secret
 
         started = clock_ms
-        Timeout.timeout(@config.total_deadline.to_f) { handle_within_deadline(raw_body, signature, secret) }
+        return refusal_reply(InvalidRequest.new("invocation exceeds 32 MiB body limit"), secret) if raw_body.bytesize > InlineAttachments::MAX_BODY_BYTES
+
+        deadline_at = Time.now.to_f + @config.total_deadline.to_f
+        Timeout.timeout(@config.total_deadline.to_f) { handle_within_deadline(raw_body, signature, secret, deadline_at) }
       rescue Timeout::Error
         log_deadline
         reply(200, envelope(deadline_result(started)), secret)
@@ -71,15 +74,15 @@ module RootCause
           embassy: "ruby",
           version: VERSION,
           protocol: 1,
-          capabilities: ["actions", "dry_run", "analysis_result", "health"]
+          capabilities: ["actions", "dry_run", "analysis_result", "health", "attachments_inline"]
         }, secret)
       end
 
       private
 
-      def handle_within_deadline(raw_body, signature, secret)
+      def handle_within_deadline(raw_body, signature, secret, deadline_at)
         invocation = authenticate(raw_body, signature, secret)
-        result = run(invocation, secret)
+        result = run(invocation, secret, deadline_at)
         log(invocation, ok: result.ok, duration_ms: result.duration_ms)
         reply(200, envelope(result), secret)
       rescue Error => e
@@ -139,7 +142,7 @@ module RootCause
         data
       end
 
-      def run(invocation, secret)
+      def run(invocation, secret, deadline_at)
         started = clock_ms
 
         Replay.guard!(
@@ -149,6 +152,7 @@ module RootCause
           store: @nonce_store
         )
 
+        attachments = InlineAttachments.validate!(invocation)
         params = Schema.validate!(invocation["params"], invocation["schema"])
         # Resolve runs in dry_run too: it exercises the digest-verified signed
         # fetch, so a dry run surfaces fetch/digest contract problems. Only the
@@ -179,7 +183,9 @@ module RootCause
           script: script,
           params: params,
           digest: invocation["script_digest"],
-          trusted_env: trusted_context_env(invocation)
+          trusted_env: trusted_context_env(invocation),
+          attachments: attachments,
+          deadline_at: deadline_at
         )
       end
 

@@ -66,6 +66,20 @@ executor's own timeout-style failure envelope on breach. `config.timeout` (20s) 
 as "yes, dry run". The envelope is emitted in the hub's canonical key order so the conformance suite
 can compare our own bytes to the goldens (key order itself is not contract).
 
+## Inline action attachments
+
+`inline_attachments.rb` validates the optional signed parameter-keyed map before resolution, then
+materializes strict base64 chunks to invocation-scoped tempfiles inside the execution mutex.
+Shape, selection, duplicates or caps → signed 400; decode/size/digest mismatch → per-file `corrupt`.
+Missing authorized blobs arrive as `unavailable`. Params remain UUID arrays. Never log bytes.
+
+`RC_ACTION_ATTACHMENTS` preserves parameter names and `mime_type`, with `path` or `error` per file.
+`RC_ACTION_DEADLINE_AT` is the earliest total/execution cutoff minus two seconds. The executor clears
+stale values, restores prior values and removes files on every outcome. Dry run validates without
+materializing. Rack reads action bodies at most 32 MiB + one detection byte regardless of headers;
+an oversized map-mode body that cannot select a key keeps the opaque unsigned selector refusal.
+Signed health advertises `attachments_inline`; conformance uses its optional health golden.
+
 ## Outbound (client.rb)
 
 - `start_analysis` — signed trigger. Optional `principal:` `{kind:, external_id:, asserted_by:,
@@ -108,6 +122,7 @@ payload, the decoration is not.
 - `schema.rb`: action param contract and reserved tenant/principal selectors (including
   `principal_claim_*`).
 - `resolver.rb`: signed script fetch + digest verification/cache.
+- `inline_attachments.rb`: signed descriptor validation, fleet caps, chunk decoding and tempfile lifecycle.
 - `executor.rb`: compiled Ruby body, trusted `ENV`, invocation-scoped context, execute timeout, stdout, structured failure.
 - `client.rb`: outbound trigger + sent-message capture.
 - `config.rb`: every knob, validated fail-closed at boot.

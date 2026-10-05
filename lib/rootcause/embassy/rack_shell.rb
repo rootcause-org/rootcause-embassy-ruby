@@ -33,10 +33,12 @@ module RootCause
         input = env["rack.input"]
         return "" unless input
 
-        body = input.read || ""
+        body = input.read(body_limit) || ""
         input.rewind if input.respond_to?(:rewind)
         body
       end
+
+      def body_limit = nil
 
       # One Rack triple for every answer: the exact bytes the signature was computed
       # over, and the signature header only when the reply carries one.

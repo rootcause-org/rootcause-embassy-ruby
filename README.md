@@ -123,6 +123,21 @@ their wire remains unchanged. Other tunables (with defaults): `clock_skew` (300s
 (`tmp/rootcause/actions`, set `nil` for memory-only), `capture_stdout` (true), `max_stdout_bytes`
 (64 KiB), `max_backtrace_lines` (50), `http_open_timeout` / `http_read_timeout`.
 
+### Signed inline action attachments
+
+Ruby 0.11 supports the optional `attachments_inline` health capability. Host-approved actions can
+receive selected chat uploads through `ENV["RC_ACTION_ATTACHMENTS"]`: a JSON map keyed by parameter
+name, containing `attachment_id`, `filename`, `mime_type`, `size_bytes`, and `path` or
+`error` (`unavailable` / `corrupt`). Original UUID params stay unchanged. Temporary paths exist only
+during execution; copy bytes into durable storage before returning.
+
+Limits: five files, 8 MiB each, 20 MiB total, 32 MiB invocation body. Malformed metadata or selections
+refuse before resolution; corrupt bytes produce a per-file failure. Dry runs validate metadata without
+decoding files. `RC_ACTION_DEADLINE_AT` gives epoch seconds of the earliest total/execution cutoff
+minus two seconds. Scripts must stop transfer work before it, retain successful primary work, report
+partial failure, and handle retry deduplication. Both environment variables and files are cleaned up
+after success, error, and timeout.
+
 ## Mount
 
 Explicit mount — least magic, easiest to restrict at the edge:

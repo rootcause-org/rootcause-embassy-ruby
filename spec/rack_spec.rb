@@ -79,3 +79,38 @@ RSpec.describe RootCause::Embassy::RackApp do
     expect(status).to eq(401)
   end
 end
+
+RSpec.describe "bounded action Rack body" do
+  it "bounds reads and signs a 400 independently of absent or forged Content-Length" do
+    limit = RootCause::Embassy::InlineAttachments::MAX_BODY_BYTES
+    [nil, "1", (limit * 2).to_s].each do |length|
+      input = instance_double(StringIO)
+      expect(input).to receive(:read).with(limit + 1).and_return(" " * (limit + 1))
+      allow(input).to receive(:rewind)
+      app = RootCause::Embassy::RackApp.new(runner: RootCause::Embassy::Runner.new(Wire.config))
+      status, headers, body = app.call("REQUEST_METHOD" => "POST", "rack.input" => input, "CONTENT_LENGTH" => length)
+      expect(status).to eq(400)
+      expect(JSON.parse(body.join).dig("error", "class")).to eq("invalid_request")
+      expect(headers[RootCause::Embassy::Signature::HEADER]).to eq(Wire.sign(body.join))
+    end
+  end
+end
+
+RSpec.describe "oversized map-mode action" do
+  it "bounds the body and keeps a missing selector opaque without executing" do
+    limit = RootCause::Embassy::InlineAttachments::MAX_BODY_BYTES
+    input = instance_double(StringIO)
+    expect(input).to receive(:read).with(limit + 1).and_return('{"attachments":"' + "a" * limit)
+    allow(input).to receive(:rewind)
+    config = Wire.config(secret: nil, secrets: {Wire::PROJECT_ID => Wire::SECRET})
+    resolver = instance_double(RootCause::Embassy::Resolver)
+    expect(resolver).not_to receive(:resolve)
+    runner = RootCause::Embassy::Runner.new(config, resolver: resolver)
+    status, headers, body = RootCause::Embassy::RackApp.new(runner: runner).call(
+      "REQUEST_METHOD" => "POST", "rack.input" => input, "CONTENT_LENGTH" => "1"
+    )
+    expect(status).to eq(401)
+    expect(headers).not_to have_key(RootCause::Embassy::Signature::HEADER)
+    expect(JSON.parse(body.join).dig("error", "class")).to eq("bad_signature")
+  end
+end
