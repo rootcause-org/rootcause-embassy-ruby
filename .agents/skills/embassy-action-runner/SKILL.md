@@ -13,6 +13,13 @@ never here.
 Everything lives under `lib/rootcause/embassy/` (the pre-0.3.0 `lib/rootcause/action_runner/` namespace
 is gone). Stdlib only — no runtime dependencies.
 
+Inline action attachments: `inline_attachments.rb` validates the signed parameter-keyed map and
+materializes bounded, hash-checked temporary files. `executor.rb` exposes `RC_ACTION_ATTACHMENTS`
+and `RC_ACTION_DEADLINE_AT` only inside the execution mutex, restoring both and deleting files on
+every exit. Params retain UUIDs only. `rack.rb` bounds action bodies independently of Content-Length;
+`runner.rb` advertises `attachments_inline`. Per-file corruption reaches the script as an error so
+it can preserve primary work; malformed metadata or limits refuse before execution.
+
 ## Two inbound routes, deliberately asymmetric
 
 | | invocation (`mount_at`) | result (`result_mount_at`) |
