@@ -108,11 +108,17 @@ RSpec.describe "signed inline action attachments" do
     unavailable = descriptor.slice("attachment_id", "filename", "mime_type", "size_bytes").merge("error" => "unavailable")
     oversized = descriptor.merge("content_base64" => "a" * (RootCause::Embassy::InlineAttachments::MAX_ENCODED_FILE_BYTES + 1))
     payloads = [invocation(descriptors: [descriptor.merge("size_bytes" => max + 1)]), invocation(descriptors: [oversized]),
-      invocation(descriptors: 3.times.map { |n| unavailable.merge("attachment_id" => format("%08d-5555-5555-5555-555555555555", n), "size_bytes" => max) }),
+      invocation(descriptors: 3.times.map { |n| descriptor.merge("attachment_id" => format("%08d-5555-5555-5555-555555555555", n), "size_bytes" => max) }),
       invocation(descriptors: 6.times.map { |n| unavailable.merge("attachment_id" => format("%08d-5555-5555-5555-555555555555", n)) })]
     expect(Base64).not_to receive(:strict_decode64)
     expect(Tempfile).not_to receive(:new)
     payloads.each { |payload| expect(invoke(payload).status).to eq(400) }
+  end
+
+  it "accepts an over-cap file announced as unavailable without bytes" do
+    unavailable = descriptor.slice("attachment_id", "filename", "mime_type", "size_bytes").merge("error" => "unavailable")
+    big = unavailable.merge("attachment_id" => "00000000-5555-5555-5555-555555555555", "size_bytes" => 200 * 1024 * 1024)
+    expect(result(invocation(descriptors: [descriptor, big])).fetch("metadata").fetch("files").last).to eq(big)
   end
 
   it "validates dry-run payloads without decoding, materializing, or executing" do

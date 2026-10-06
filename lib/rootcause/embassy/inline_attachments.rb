@@ -37,7 +37,8 @@ module RootCause
           descriptors.each do |descriptor|
             validate_descriptor!(descriptor)
             ids << descriptor["attachment_id"]
-            total += descriptor["size_bytes"]
+            # Byte caps bind delivered bytes; an over-cap file arrives as `unavailable` with its real size.
+            total += descriptor["size_bytes"] unless descriptor.key?("error")
             encoded_total += descriptor.fetch("content_base64", "").bytesize
             invalid! if ids.length > MAX_FILES || total > MAX_TOTAL_BYTES || encoded_total > MAX_ENCODED_TOTAL_BYTES
           end
@@ -56,11 +57,11 @@ module RootCause
           invalid! unless value.is_a?(String) && !value.empty? && !value.include?("\0")
         end
         size = descriptor["size_bytes"]
-        invalid! unless size.is_a?(Integer) && size >= 0 && size <= MAX_FILE_BYTES
+        invalid! unless size.is_a?(Integer) && size >= 0
         if descriptor.key?("error")
           invalid! unless descriptor.keys.sort == (METADATA_KEYS + ["error"]).sort && descriptor["error"] == "unavailable"
         else
-          invalid! unless descriptor.keys.sort == (METADATA_KEYS + %w[sha256 content_base64]).sort
+          invalid! unless descriptor.keys.sort == (METADATA_KEYS + %w[sha256 content_base64]).sort && size <= MAX_FILE_BYTES
           invalid! unless descriptor["sha256"].is_a?(String) && /\A[0-9a-f]{64}\z/.match?(descriptor["sha256"])
           encoded = descriptor["content_base64"]
           invalid! unless encoded.is_a?(String) && encoded.bytesize <= MAX_ENCODED_FILE_BYTES

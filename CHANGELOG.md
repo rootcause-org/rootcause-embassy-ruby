@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+
+- **Over-cap inline attachments** — an `unavailable` descriptor may declare any `size_bytes`; byte
+  caps (8 MiB/file, 20 MiB total) count only descriptors carrying bytes. The host sends a file past
+  them this way instead of refusing the action.
+
 ## 0.12.0
 
 Integrator-visible changes (additive):
