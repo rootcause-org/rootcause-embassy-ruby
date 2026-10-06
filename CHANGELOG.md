@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0
+
+- **Loader contract `?v=4`** (`Chat::LOADER_CONTRACT`): the hosted loader's persistent Turbo mode
+  (one conversation across soft navigations, tokens only from a `refreshToken` hook, `data-rc-scope`
+  boundary guard). Tags from `chat_widget_tag` behave as before; a persistent host builds its own tag
+  from `Chat.token` + `LOADER_PATH`/`LOADER_CONTRACT`. Hub decision 23.
+- Contract fixtures re-vendored from hub `2be70da93fcffcf48e3676905a36bd9d6f8579f0`.
+
 ## 0.12.1
 
 - **Over-cap inline attachments** — an `unavailable` descriptor may declare any `size_bytes`; byte
