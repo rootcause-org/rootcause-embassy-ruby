@@ -102,6 +102,27 @@ RSpec.describe RootCause::Embassy::Executor do
     expect(result.return_value).to be_nil
   end
 
+  it "restores an inherited RC_ACTION_RUN_ID after success, exception and timeout" do
+    inherited = [ENV.key?("RC_ACTION_RUN_ID"), ENV["RC_ACTION_RUN_ID"]]
+    ENV["RC_ACTION_RUN_ID"] = "stale-run"
+    trusted_env = {"RC_ACTION_RUN_ID" => "55555555-5555-5555-5555-555555555555"}
+    {
+      'ENV["RC_ACTION_RUN_ID"]' => true,
+      'raise ENV["RC_ACTION_RUN_ID"]' => false,
+      "sleep 1" => false
+    }.each do |script, ok|
+      result = described_class.new(Wire.config(timeout: 0.05))
+        .run(script: script, params: {}, digest: Wire.digest_of(script), trusted_env: trusted_env)
+
+      expect(result.ok).to be(ok), script
+      expect(result.return_value || result.error[:message]).to eq("55555555-5555-5555-5555-555555555555") unless script.start_with?("sleep")
+      expect(ENV["RC_ACTION_RUN_ID"]).to eq("stale-run"), script
+    end
+  ensure
+    present, value = inherited
+    present ? ENV["RC_ACTION_RUN_ID"] = value : ENV.delete("RC_ACTION_RUN_ID")
+  end
+
   it "captures a raised exception as error{class, message, backtrace}" do
     result = run("raise ArgumentError, 'boom'")
     expect(result.ok).to be(false)

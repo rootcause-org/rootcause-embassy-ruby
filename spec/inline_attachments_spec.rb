@@ -136,14 +136,14 @@ RSpec.describe "signed inline action attachments" do
       raw = JSON.generate(invocation(script: body))
       reply = RootCause::Embassy::Runner.new(timeout_config).handle(raw_body: raw, signature: Wire.sign(raw))
       expect(JSON.parse(reply.body)["ok"]).to be(false)
-      expect(keys.map { |key| ENV[key] }).to eq(%w[stale stale])
+      expect(keys.map { |key| ENV[key] }).to all(eq("stale"))
     end
     timeout_config = Wire.config(timeout: 0.1, total_deadline: 0.02)
     Wire.stub_fetch(script: "sleep 0.1")
     raw = JSON.generate(invocation(script: "sleep 0.1"))
     reply = RootCause::Embassy::Runner.new(timeout_config).handle(raw_body: raw, signature: Wire.sign(raw))
     expect(JSON.parse(reply.body)["ok"]).to be(false)
-    expect(keys.map { |key| ENV[key] }).to eq(%w[stale stale])
+    expect(keys.map { |key| ENV[key] }).to all(eq("stale"))
     paths.each { |path| expect(File).not_to exist(path) }
   ensure
     previous&.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }

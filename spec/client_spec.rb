@@ -219,7 +219,86 @@ RSpec.describe RootCause::Embassy::Client do
     WebMock.stub_request(:post, Wire::TRIGGER_URL).to_timeout
     expect {
       client.start_analysis(subject: "s", body: "b")
-    }.to raise_error(RootCause::Embassy::TriggerError, /trigger failed/)
+    }.to raise_error(RootCause::Embassy::TriggerError, /trigger failed/) { |error|
+      expect(error.status).to be_nil
+      expect(error.code).to be_nil
+    }
+  end
+
+  it "exposes the host refusal's status and code so a caller can retry without context_refs" do
+    WebMock.stub_request(:post, Wire::TRIGGER_URL).to_return(
+      status: 400,
+      body: JSON.generate("error" => {"code" => "CONTEXT_REF_REFUSED", "message" => "secret-ish host detail"})
+    )
+    expect {
+      client.start_analysis(subject: "s", body: "b", context_refs: [{kind: "action_run", id: "55555555-5555-5555-5555-555555555555"}])
+    }.to raise_error(RootCause::Embassy::TriggerError) { |error|
+      expect(error.status).to eq(400)
+      expect(error.code).to eq("CONTEXT_REF_REFUSED")
+      expect(error.message).to eq("analysis trigger returned 400 (CONTEXT_REF_REFUSED)")
+    }
+  end
+
+  it "keeps code nil and the body out of the message when the refusal body is not the error envelope" do
+    [
+      "<html>proxy error</html>",
+      JSON.generate("error" => "plain"),
+      JSON.generate("error" => {"code" => "not a code; drop table"})
+    ].each do |body|
+      WebMock.stub_request(:post, Wire::TRIGGER_URL).to_return(status: 502, body: body)
+      expect {
+        client.start_analysis(subject: "s", body: "b")
+      }.to raise_error(RootCause::Embassy::TriggerError) { |error|
+        expect(error.status).to eq(502)
+        expect(error.code).to be_nil
+        expect(error.message).to eq("analysis trigger returned 502")
+      }
+    end
+  end
+
+  describe "context_refs" do
+    let(:run_id) { "55555555-5555-5555-5555-555555555555" }
+
+    it "carries one action_run reference after session_id" do
+      Wire.stub_trigger
+      client.start_analysis(subject: "s", body: "b", session_id: "sess-1", context_refs: [{kind: :action_run, id: run_id}])
+
+      expect(
+        a_request(:post, Wire::TRIGGER_URL).with { |req|
+          body = JSON.parse(req.body)
+          body["context_refs"] == [{"kind" => "action_run", "id" => run_id}] &&
+            body.keys.index("context_refs") == body.keys.index("session_id") + 1
+        }
+      ).to have_been_made
+    end
+
+    it "omits the key when nil or empty" do
+      Wire.stub_trigger
+      client.start_analysis(subject: "s", body: "b")
+      client.start_analysis(subject: "s", body: "b", context_refs: [])
+
+      expect(a_request(:post, Wire::TRIGGER_URL).with { |req| !JSON.parse(req.body).key?("context_refs") }).to have_been_made.twice
+    end
+
+    it "refuses malformed references with ANALYSIS_REQUEST_INVALID before sending" do
+      stub = Wire.stub_trigger
+      [
+        {kind: "action_run", id: run_id},
+        [{kind: "action_run", id: run_id}, {kind: "action_run", id: run_id}],
+        [{kind: "session", id: run_id}],
+        [{kind: "action_run", id: "not-a-uuid"}],
+        [{kind: "action_run", id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"}],
+        [{kind: "action_run", id: 42}],
+        [{kind: "action_run"}],
+        [{kind: "action_run", id: run_id, extra: true}],
+        ["55555555-5555-5555-5555-555555555555"]
+      ].each do |refs|
+        expect {
+          client.start_analysis(subject: "s", body: "b", context_refs: refs)
+        }.to raise_error(RootCause::Embassy::Error) { |error| expect(error.code).to eq("ANALYSIS_REQUEST_INVALID") }
+      end
+      expect(stub).not_to have_been_requested
+    end
   end
 
   it "refuses with an additive typed code when trigger_url is unconfigured (chat-only boot)" do

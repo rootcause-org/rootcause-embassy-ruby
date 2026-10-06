@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0
+
+Integrator-visible changes (additive):
+
+- **`RC_ACTION_RUN_ID`** — executing invocations may carry the host's `action_run_id`; it is exposed
+  to the action script only while it runs (inherited values removed, restored after). Absent field →
+  no variable; a malformed value refuses as signed `400 invalid_request`.
+- **`start_analysis(context_refs:)`** — hand back at most one `{kind: "action_run", id:}` so the
+  analysis can read the chat behind an action-created record. Shape is checked before sending
+  (`ANALYSIS_REQUEST_INVALID`).
+- **`TriggerError#status` / `#code`** — HTTP status and the host's error code (e.g.
+  `CONTEXT_REF_REFUSED`, retry without `context_refs`); `nil` on transport/malformed responses.
+- Trigger bodies now emit the hub golden key order (no semantic change).
+- Contract fixtures re-vendored from hub `6d2c81878dc34c7d171b8f6cb38964b5e861880a`.
+
 ## 0.10.0
 
 Integrator-visible changes:

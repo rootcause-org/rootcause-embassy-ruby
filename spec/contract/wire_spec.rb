@@ -256,10 +256,7 @@ RSpec.describe "hub contract conformance" do
         expect_signed_over_transmitted_bytes
       end
 
-      # Ruby appends the optional fields after nonce/issued_at, so this one is
-      # structurally equal rather than byte-equal — key order is not contract, and
-      # the signature is over the bytes we actually sent.
-      it "emits a structurally equal principal trigger and signs the bytes it sends" do
+      it "emits the principal trigger byte-for-byte" do
         allow(SecureRandom).to receive(:uuid).and_return("contract-nonce-trigger-principal")
         Wire.stub_trigger
         golden = JSON.parse(fixture("analysis/trigger_with_principal.json"))
@@ -274,8 +271,28 @@ RSpec.describe "hub contract conformance" do
           principal: golden.fetch("principal")
         )
 
+        expect(transmitted_body).to eq(utf8_fixture("analysis/trigger_with_principal.json"))
+        expect_signed_over_transmitted_bytes
+      end
+
+      it "emits the context-reference trigger byte-for-byte" do
+        allow(SecureRandom).to receive(:uuid).and_return("contract-nonce-trigger-context")
+        Wire.stub_trigger
+        golden = JSON.parse(fixture("analysis/trigger_with_context_refs.json"))
+
+        client.start_analysis(
+          subject: golden.fetch("subject"),
+          body: golden.fetch("body"),
+          attachments: golden.fetch("attachments"),
+          metadata: golden.fetch("metadata"),
+          session_id: golden.fetch("session_id"),
+          context_refs: golden.fetch("context_refs"),
+          tenant: golden.fetch("tenant")
+        )
+
         expect(JSON.parse(transmitted_body)).to eq(golden)
-        expect(JSON.parse(transmitted_body).keys.sort).to eq(golden.keys.sort)
+        expect(JSON.parse(transmitted_body).keys).to eq(golden.keys)
+        expect(transmitted_body).to eq(utf8_fixture("analysis/trigger_with_context_refs.json"))
         expect_signed_over_transmitted_bytes
       end
 
@@ -343,6 +360,70 @@ RSpec.describe "hub contract conformance" do
 
       expect(reply.status).to eq(200)
       expect(JSON.parse(reply.body)["return_value"]).to eq({"dry_run" => true, "would_execute" => true})
+    end
+  end
+
+  # conformance.md, action plane: action_run_id is trusted RC_ACTION_RUN_ID only
+  # for the invocation that carried it. The resolver is faked so a probe script can
+  # read ENV while the hub's signed invocation bytes stay untouched.
+  describe "action_run_id provenance" do
+    let(:probe) { '{ run_id: ENV["RC_ACTION_RUN_ID"], present: ENV.key?("RC_ACTION_RUN_ID") }' }
+    let(:resolver) { instance_double(RootCause::Embassy::Resolver, resolve: probe) }
+    let(:runner) { RootCause::Embassy::Runner.new(Wire.config(secret: reverse_secret), resolver: resolver) }
+
+    before do
+      allow(Time).to receive(:now).and_return(Time.utc(2026, 6, 20))
+      @inherited = [ENV.key?("RC_ACTION_RUN_ID"), ENV["RC_ACTION_RUN_ID"]]
+      ENV["RC_ACTION_RUN_ID"] = "99999999-9999-9999-9999-999999999999"
+    end
+
+    after do
+      present, value = @inherited
+      present ? ENV["RC_ACTION_RUN_ID"] = value : ENV.delete("RC_ACTION_RUN_ID")
+    end
+
+    def invoke_raw(raw)
+      runner.handle(raw_body: raw, signature: RootCause::Embassy::Signature.sign(raw, secret: reverse_secret))
+    end
+
+    it "exposes invocation_action_run.json's id only during that invocation" do
+      reply = invoke_raw(fixture("actions/invocation_action_run.json"))
+
+      expect(reply.status).to eq(200)
+      expect(JSON.parse(reply.body)["return_value"]).to eq("run_id" => "55555555-5555-5555-5555-555555555555", "present" => true)
+      expect(ENV["RC_ACTION_RUN_ID"]).to eq("99999999-9999-9999-9999-999999999999")
+    end
+
+    it "exposes none for fixtures without it and never leaks the inherited value" do
+      %w[invocation_flat invocation_tenant invocation_principal].each do |name|
+        reply = invoke_raw(fixture("actions/#{name}.json"))
+
+        expect(JSON.parse(reply.body)["return_value"]).to eq({"run_id" => nil, "present" => false}), name
+      end
+      expect(ENV["RC_ACTION_RUN_ID"]).to eq("99999999-9999-9999-9999-999999999999")
+    end
+
+    it "refuses a malformed value as signed 400 before resolution, dry run included" do
+      golden = JSON.parse(fixture("actions/invocation_action_run.json"))
+      ["not-a-uuid", "55555555-5555-5555-5555-55555555555Z", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", 42, nil, ""].each_with_index do |value, i|
+        [false, true].each do |dry_run|
+          invocation = golden.merge("action_run_id" => value, "nonce" => "malformed-#{i}-#{dry_run}")
+          invocation["dry_run"] = true if dry_run
+          reply = invoke_raw(JSON.generate(invocation))
+
+          expect(reply.status).to eq(400), value.inspect
+          expect(JSON.parse(reply.body).dig("error", "class")).to eq("invalid_request")
+          expect(RootCause::Embassy::Signature.valid?(reply.signature, reply.body, secret: reverse_secret)).to be(true)
+        end
+      end
+      expect(resolver).not_to have_received(:resolve)
+    end
+
+    it "validates on dry run but runs nothing" do
+      invocation = JSON.parse(fixture("actions/invocation_action_run.json")).merge("dry_run" => true)
+      reply = invoke_raw(JSON.generate(invocation))
+
+      expect(JSON.parse(reply.body)["return_value"]).to eq("dry_run" => true, "would_execute" => true)
     end
   end
 

@@ -42,32 +42,40 @@ module RootCause
       #   model output or from anything the end user can set. Dormant unless the
       #   project declares `scope_claims`, in which case the host resolves it into
       #   typed data-plane claims. Omit entirely when there is no authenticated user.
+      # @param context_refs [Array<Hash>, nil] at most one `{kind: "action_run", id:}`
+      #   whose id is the `RC_ACTION_RUN_ID` an action stored with the record it
+      #   created — never a param or user text. Lets the analysis read the chat that
+      #   led to that action, when its approved manifest delegates it.
       # @return [Analysis]
       # @raise [TriggerError] non-2xx, malformed response, or transport failure
       # @raise [Error] chat-only/half-wired setup: ANALYSIS_TRIGGER_URL_REQUIRED or
-      #   ACTION_PLANE_DISABLED (both carry code/hint/docs; Error < ArgumentError)
+      #   ACTION_PLANE_DISABLED; malformed context_refs: ANALYSIS_REQUEST_INVALID
+      #   (all carry code/hint/docs; Error < ArgumentError)
       # @raise [ArgumentError] an over-cap (single or aggregate)/malformed attachment, or a principal
       #   without both kind and external_id
-      def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil, tenant: nil, principal: nil, project_id: nil)
+      def start_analysis(subject:, body:, attachments: [], metadata: {}, session_id: nil, tenant: nil, principal: nil, project_id: nil, context_refs: nil)
         url = @config.trigger_url
         if Util.blank?(url)
           raise Error.public("ANALYSIS_TRIGGER_URL_REQUIRED", "Set ROOTCAUSE_TRIGGER_URL before starting an analysis.")
         end
 
         metadata ||= {}
+        context_refs = normalize_context_refs(context_refs)
+        # Key order is not contract, but this one reproduces every trigger golden
+        # byte-for-byte. Only carry session_id on a follow-up; the first turn omits
+        # it and the host mints one, returned in the 202 below.
         payload = {
           "subject" => subject,
           "body" => body,
           "attachments" => normalize_attachments(attachments),
-          "metadata" => metadata,
-          "nonce" => SecureRandom.uuid,
-          "issued_at" => Time.now.utc.iso8601
+          "metadata" => metadata
         }
-        # Only carry session_id on a follow-up; the first turn omits it and the host
-        # mints one, returned in the 202 below.
         payload["session_id"] = session_id unless Util.blank?(session_id)
-        payload["tenant"] = tenant unless Util.blank?(tenant)
+        payload["context_refs"] = context_refs unless context_refs.empty?
         payload["principal"] = normalize_principal(principal) unless principal.nil?
+        payload["nonce"] = SecureRandom.uuid
+        payload["issued_at"] = Time.now.utc.iso8601
+        payload["tenant"] = tenant unless Util.blank?(tenant)
         raw = JSON.generate(payload)
 
         response = post(url, raw, project_id: project_id, transport_error: TriggerError, label: "analysis trigger")
@@ -162,6 +170,28 @@ module RootCause
         end
       end
 
+      CONTEXT_REF_ID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
+      CONTEXT_REFS_HINT = 'Pass at most one context_ref, exactly {kind: "action_run", id: <stored RC_ACTION_RUN_ID>}.'
+
+      # The host strict-decodes this (any deviation is a 400 the caller can't
+      # read), so mirror its shape rules here and fail before the round-trip.
+      def normalize_context_refs(refs)
+        return [] if refs.nil?
+        unless refs.is_a?(Array) && refs.length <= 1
+          raise Error.public("ANALYSIS_REQUEST_INVALID", CONTEXT_REFS_HINT, "context_refs must be an array of at most one entry")
+        end
+
+        refs.map do |ref|
+          fields = ref.is_a?(Hash) ? stringify_keys(ref) : {}
+          valid = fields.keys.sort == %w[id kind] &&
+            ["action_run", :action_run].include?(fields["kind"]) &&
+            fields["id"].is_a?(String) && CONTEXT_REF_ID_PATTERN.match?(fields["id"])
+          raise Error.public("ANALYSIS_REQUEST_INVALID", CONTEXT_REFS_HINT, "context_refs entry is invalid") unless valid
+
+          {"kind" => "action_run", "id" => fields["id"]}
+        end
+      end
+
       # Validate + canonicalize attachments. Decode each (strict base64) to measure
       # it against the per-attachment and aggregate caps and to prove it is
       # well-formed; fail loud BEFORE sending so the caller learns of a bad payload
@@ -247,7 +277,10 @@ module RootCause
 
       def parse(response)
         unless response.is_a?(Net::HTTPSuccess)
-          raise TriggerError, "analysis trigger returned #{response.code}"
+          code = host_error_code(response.body)
+          message = "analysis trigger returned #{response.code}"
+          message += " (#{code})" if code
+          raise TriggerError.new(message, status: response.code.to_i, code: code)
         end
 
         data = JSON.parse(response.body.to_s)
@@ -262,6 +295,18 @@ module RootCause
         ).freeze
       rescue JSON::ParserError
         raise TriggerError, "analysis trigger response was not valid JSON"
+      end
+
+      HOST_ERROR_CODE_PATTERN = /\A[A-Z][A-Z0-9_]{0,63}\z/
+
+      # Only a well-formed code leaves the body: it reaches the error message,
+      # and arbitrary host text must not.
+      def host_error_code(body)
+        data = JSON.parse(body.to_s)
+        code = data["error"]["code"] if data.is_a?(Hash) && data["error"].is_a?(Hash)
+        (code.is_a?(String) && HOST_ERROR_CODE_PATTERN.match?(code)) ? code : nil
+      rescue JSON::ParserError
+        nil
       end
 
       # A 2xx is success; the body is optional. When the host echoes a row id

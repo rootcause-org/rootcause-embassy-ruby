@@ -101,7 +101,19 @@ module RootCause
     # failure. The call is the customer's, so we surface it rather than swallow it
     # — the caller decides whether to retry. (A bad/over-cap attachment raises
     # ArgumentError before anything is sent — it is not retryable.)
-    class TriggerError < StandardError; end
+    #
+    # `status` is the HTTP status of a non-2xx and `code` the host's
+    # `{"error":{"code"}}` (e.g. CONTEXT_REF_REFUSED → retry without
+    # context_refs); both nil on transport failure or a malformed 2xx.
+    class TriggerError < StandardError
+      attr_reader :status, :code
+
+      def initialize(message = nil, status: nil, code: nil)
+        @status = status
+        @code = code
+        super(message)
+      end
+    end
 
     # Raised to the CALLER of `capture_sent_message`, never turned into a signed
     # reply: the sent-message capture got a non-2xx, a malformed response, or a

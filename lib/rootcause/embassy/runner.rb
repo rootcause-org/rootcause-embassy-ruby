@@ -22,6 +22,8 @@ module RootCause
       TENANT_ID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
       TENANT_SLUG_PATTERN = /\A[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\z/
       NIL_UUID = "00000000-0000-0000-0000-000000000000"
+      # The host emits the canonical lowercase form; anything else is not its value.
+      ACTION_RUN_ID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
 
       # Exposed so a thin transport shell (RackApp) can answer plane-disabled before
       # it routes, without reaching into internals.
@@ -139,6 +141,7 @@ module RootCause
 
         validate_tenant_context!(data)
         validate_principal_context!(data)
+        validate_action_run_id!(data)
         data
       end
 
@@ -271,8 +274,21 @@ module RootCause
         raise InvalidRequest, "principal fields must not contain NUL bytes" if strings.any? { |item| item.include?("\0") }
       end
 
+      # Optional: older hosts and dry runs omit it. It locates the host's ledger row
+      # for a later context_refs hand-back, so only the verified invocation sets it.
+      def validate_action_run_id!(invocation)
+        return unless invocation.key?("action_run_id")
+
+        value = invocation["action_run_id"]
+        unless value.is_a?(String) && ACTION_RUN_ID_PATTERN.match?(value)
+          raise InvalidRequest, "action_run_id must be a canonical lowercase UUID"
+        end
+      end
+
       def trusted_context_env(invocation)
-        trusted_tenant_env(invocation).merge(trusted_principal_env(invocation)).freeze
+        env = trusted_tenant_env(invocation).merge(trusted_principal_env(invocation))
+        env["RC_ACTION_RUN_ID"] = invocation["action_run_id"] if invocation.key?("action_run_id")
+        env.freeze
       end
 
       def trusted_principal_env(invocation)

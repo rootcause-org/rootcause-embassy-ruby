@@ -236,8 +236,25 @@ class AnalyzeTicketJob < ApplicationJob
 end
 ```
 
-A non-2xx / transport failure raises `RootCause::Embassy::TriggerError` (yours to retry); an
-over-cap or malformed attachment raises `ArgumentError` before anything is sent.
+A non-2xx / transport failure raises `RootCause::Embassy::TriggerError` (yours to retry; `#status` and
+the host's `#code` are set on a non-2xx); an over-cap or malformed attachment raises `ArgumentError`
+before anything is sent.
+
+**Chat that led to an action** — an action script sees the host's `ENV["RC_ACTION_RUN_ID"]` while it
+runs. Store it with the record it creates; when you later analyze that record, pass it back so the
+run can read the originating chat (the action's approved manifest must opt in):
+
+```ruby
+begin
+  client.start_analysis(subject:, body:, tenant:, context_refs: [{kind: "action_run", id: ticket.rc_action_run_id}])
+rescue RootCause::Embassy::TriggerError => e
+  raise unless e.code == "CONTEXT_REF_REFUSED"
+  client.start_analysis(subject:, body:, tenant:) # same trigger, without the chat
+end
+```
+
+Only the stored env value, never a param or user text. At most one reference; a malformed one raises
+`ANALYSIS_REQUEST_INVALID` before sending.
 
 **Who it is for** — pass `principal:` when your app knows the authenticated end user behind the
 trigger, so rootcause can scope the run's data access to them:

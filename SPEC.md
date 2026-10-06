@@ -88,7 +88,7 @@ A single mounted handler does exactly this, fail-closed at every step:
 6. **Bind + execute** — params as a **frozen, symbol-keyed hash**, passed **as data, never
    interpolated into source**. Install the trusted context as `RC_TENANT_ID`, `RC_TENANT_SLUG`, and
    `RC_TENANT_SCOPE_VALUE` plus optional `RC_PRINCIPAL_KIND`, `RC_PRINCIPAL_EXTERNAL_ID`, and typed
-   `RC_PRINCIPAL_CLAIM_*` values only for the serialized execution, removing stale values first and
+   `RC_PRINCIPAL_CLAIM_*` values and `RC_ACTION_RUN_ID` only for the serialized execution, removing stale values first and
    restoring process `ENV` afterward.
    Compile the body once into a callable that receives `params`; its last expression is the
    (JSON-serializable) return value.
@@ -168,6 +168,7 @@ validation are authoritative in the hub's `planes/actions.md`; signed health adv
   "tenant_scope_value": "tenant-acme",           // host-stamped; optional/empty
   "principal": { "kind": "acme_user", "external_id": "user-8f3",
                  "claims": { "user_id": "user-8f3", "backup_ids": ["backup-7"] } },
+  "action_run_id": "uuid",                    // host ledger id; optional, omitted on dry run
   "nonce":         "uuid",                          // replay id
   "issued_at":     "2026-06-03T10:00:00Z"          // ±5 min window
 }
@@ -212,7 +213,8 @@ target, never assert host context. An optional `principal` has non-empty `kind` 
 object of named typed claims; malformed or partial context refuses. A tenant-enabled Embassy deployment
 must set `require_tenant_context = true`, making an absent tuple a hard refusal before script resolution
 unless the signed action id is in `tenantless_actions`; partial tuples still refuse. Flat deployments
-retain the default `false`.
+retain the default `false`. An optional `action_run_id` must be a canonical lowercase UUID string (else
+`400 invalid_request`, dry run included) and becomes `RC_ACTION_RUN_ID` for that execution only.
 
 ### 5b. Embedded-chat token (gem → browser → host)
 
@@ -308,6 +310,8 @@ runs a body **iff** its hash equals the digest in the signed invocation.
   `RC_TENANT_SCOPE_VALUE`; every tenant-aware write must scope itself with the applicable field.
 - **Principal context is not a param.** `RC_PRINCIPAL_KIND`, `RC_PRINCIPAL_EXTERNAL_ID`, and typed
   `RC_PRINCIPAL_CLAIM_*` values are host-signed and only exist while that action runs.
+- **`RC_ACTION_RUN_ID` is a locator, not a grant.** Store it with what the action creates and pass it
+  back only as `context_refs` on a later analysis trigger; the host authorizes every use.
 - **`ENV` is process-global.** The executor serializes action bodies while trusted `RC_TENANT_*` and
   `RC_PRINCIPAL_*` context is installed, then restores prior values even on timeout/error so concurrent
   runs cannot cross context.
