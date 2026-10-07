@@ -139,6 +139,11 @@ payload, the decoration is not.
 - `spec/fixtures/contract/`: vendored canonical goldens — synced wholesale from the contract hub,
   with the source revision recorded in `HUB_SHA`, not hand-edited.
 
+`chat.rb` owns `LOADER_CONTRACT` (currently `5`). `getPageContext` is an integrator-owned
+browser boot callback; page URL/context are untrusted turn hints, never JWT claims or signed
+Embassy fields. SDK fan-out bumps the loader revision and vendors the complete hub fixtures;
+`chat/page_url.json` is unsigned browser/host test data, not a Ruby sanitizer contract.
+
 ## House cops and CI
 
 `lib/rubocop/cop/embassy/` holds tiny line cops, wired in through `.rubocop.yml` (merged into

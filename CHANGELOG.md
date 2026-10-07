@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0
+
+- Loader contract `?v=5` enables the hosted loader's per-message `getPageContext` callback.
+- Contract fixtures re-vendored from hub `b3a9dad1c1d36f160a554a9cb1b5719aaa3caf5c`, including unsigned URL normalization cases.
+
 ## 0.13.0
 
 - **Loader contract `?v=4`** (`Chat::LOADER_CONTRACT`): the hosted loader's persistent Turbo mode
